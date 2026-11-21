@@ -135,10 +135,13 @@ static void haoge_settingsshelf_install(Class cls, NSString *name) {
         });
     } else if ([name isEqualToString:@"_insertContiguousSpecifiers:atIndex:animated:"]) {
         replacement = imp_implementationWithBlock(^(id controller, NSArray *rows, NSInteger index, BOOL animated) {
-            BOOL root = haoge_settingsshelf_isRoot(controller, nil); ++haoge_settingsshelf_busy;
+            BOOL root = haoge_settingsshelf_isRoot(controller, nil);
+            ++haoge_settingsshelf_busy;
             @try {
-                if (root) { NSUInteger count = [[controller specifiers] count]; index = MAX(0, MIN(index, (NSInteger)count)); }
-                ((void (*)(id, SEL, id, NSInteger, BOOL))original)(controller, selector, rows, index, root ? NO : animated);
+                // Preserve the exact insertion index and animation flag. The
+                // system performs a UITableView batch update here; only regroup
+                // after the original insertion has fully returned.
+                ((void (*)(id, SEL, id, NSInteger, BOOL))original)(controller, selector, rows, index, animated);
             } @finally { --haoge_settingsshelf_busy; }
             if (root) haoge_settingsshelf_schedule(controller);
         });
