@@ -147,12 +147,24 @@ NSArray<NSValue *> *haoge_settingsshelf_rootRemovalRanges(
         NSInteger category = haoge_settingsshelf_entryCategory(entry);
         if (category) [category == 1 ? tweaks : apps addObject:entry];
     }
+    // Track empty third-party headers against the captured source, not an
+    // insertion that temporarily splits an existing system section.
+    NSHashTable *movedGroups = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
+    id sourceGroup = nil; BOOL sourceMoved = NO, sourceSystem = NO;
+    for (id entry in raw) {
+        if (haoge_settingsshelf_isGroup(entry)) {
+            if (sourceGroup && sourceMoved && !sourceSystem) [movedGroups addObject:sourceGroup];
+            sourceGroup = entry; sourceMoved = NO; sourceSystem = NO;
+        } else if (haoge_settingsshelf_isSelfEntry(entry) || haoge_settingsshelf_entryCategory(entry)) sourceMoved = YES;
+        else sourceSystem = YES;
+    }
+    if (sourceGroup && sourceMoved && !sourceSystem) [movedGroups addObject:sourceGroup];
     NSMutableArray *kept = [NSMutableArray array];
     id pendingGroup = nil; BOOL groupHadMoved = NO; NSUInteger keptSinceGroup = 0;
     // Only the third-party buckets are historical. System order and membership
     // always come from the current host snapshot, including a late Apple ID.
     for (id entry in alreadyGrouped ? input : raw) {
-        if (haoge_settingsshelf_isNavigation(entry)) continue;
+        if (haoge_settingsshelf_isNavigation(entry) || [movedGroups containsObject:entry]) continue;
         if (haoge_settingsshelf_isGroup(entry)) {
             if (pendingGroup && (!groupHadMoved || keptSinceGroup)) [kept addObject:pendingGroup];
             pendingGroup = entry; groupHadMoved = NO; keptSinceGroup = 0;
