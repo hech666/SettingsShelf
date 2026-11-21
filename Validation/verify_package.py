@@ -64,6 +64,10 @@ def main():
         filtr=plistlib.loads(mains[0].with_suffix('.plist').read_bytes())
         assert filtr=={'Filter':{'Bundles':['com.apple.Preferences']}}
         resources=prefs[0].parent;icons={}
+        assert b'PSSwitchCell' not in prefs[0].read_bytes(), 'unexpected preference toggle'
+        assert b'HaogeSettingsShelfConfig' not in mains[0].read_bytes(), 'legacy enable gate present'
+        assert b'always-on grouping runtime loaded' in mains[0].read_bytes(), 'missing always-on runtime'
+        assert not (resources/'HaogeSettingsShelfRoot.plist').exists(), 'legacy switch plist included'
         for name in ('HaogeSettingsShelfApps@2x.png','HaogeSettingsShelfTweaks@2x.png'):
             source=ROOT/'HaogeSettingsShelfPrefs/Resources'/name
             payload=(resources/name).read_bytes()

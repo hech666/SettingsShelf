@@ -2,7 +2,7 @@
 from pathlib import Path
 import hashlib,zipfile,json
 root=Path('/var/minis/workspace/SettingsShelf')
-out=Path('/var/minis/attachments/SettingsShelf_Source_5.2.0_Names_Icons60.zip')
+out=Path('/var/minis/attachments/SettingsShelf_Source_AlwaysOn_GroupingFix.zip')
 exclude={'packages','.git','.theos','.theos-ci','.build_stub','__pycache__','objects','native-arm64e'}
 def include(p):
  rel=p.relative_to(root)

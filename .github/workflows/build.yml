@@ -26,6 +26,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate names, icons and project
         run: python3 Validation/project_check.py
+      - name: Run grouping model regression tests
+        run: |
+          xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation -ISources Sources/HaogeSettingsShelfGrouping.m Validation/GroupingTests.m -o "$RUNNER_TEMP/settingsshelf-grouping-tests"
+          "$RUNNER_TEMP/settingsshelf-grouping-tests"
       - name: Set package version
         id: version
         run: |

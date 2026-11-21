@@ -1,18 +1,19 @@
 # SettingsShelf / 越狱插件和应用软件
 
-独立 iOS 设置分类导航插件，包标识 `com.haoge.settingsshelf`。仅注入 `com.apple.Preferences`；最低 iOS 15.0，主要待测环境为 iOS 16 / Roothide。默认关闭，在设置中开启后显示两个入口：
+独立 iOS 设置收纳插件，包标识 `com.haoge.settingsshelf`。仅注入 `com.apple.Preferences`；最低 iOS 15.0，主要待测环境为 iOS 16 / Roothide。**安装后默认生效，没有启用开关；旧版保存的 enabled 值不再读取。**设置首页只保留两个分类入口：
 
 - **越狱插件**：使用用户提供的 `系统插件.png`。
 - **应用软件**：使用用户提供的 `应用软件.png`。
 
 两张图均缩至 **60×60 像素的 RGBA PNG**，保留透明边缘、移除图片附带元数据，并采用 PNG 压缩。以 `@2x` 资源在设置列表中按 30×30 pt 显示。
 
-## 首版范围
+## 真正收纳与修复
 
-- 在设置首页添加分类入口，不搬移或删除系统原有项目。
-- 插件页扫描 PreferenceLoader 描述文件，构造进入原插件 PreferenceBundle 的链接。
-- 应用页读取 Settings root 的 `AppBundleID` 项，兼容外部 `THAppsSpecifiers` 提供器，并补充同类 PreferenceLoader 描述文件。没有显式元数据的应用不会猜测归类。
-- 配置由偏好面板原子写入，Tweak 只读取快照。关闭开关时不添加入口。
+- 将识别出的越狱插件设置、第三方应用设置从首页移入两个分类，系统设置仍在原位。
+- 保留原始 PSSpecifier、target、图标、lazy-bundle 和跳转信息，不扫描磁盘拼造第三方设置链接。
+- 同时覆盖根页面 getter/setter、首次显示、前台恢复和延迟插入第三方项目，原位修改 PSListController 实际使用的数组。
+- 不再把已经加载的目标 Class 覆盖成字符串；目标页不可用时保留原行，不进行隐藏。
+- 设置面板改为当前收纳计数、两个分类入口与“重新整理设置首页”，没有开关或配置写入。
 - 不含原 TweaksHub 二进制，也不含屏蔽电池维修提示、屏蔽系统更新等无关功能。
 - 与 TweaksHub、Shuffle 等同类设置重排插件声明冲突。
 
@@ -44,8 +45,9 @@ sh build.sh rootless
 
 ## 主要源码
 
-- `Hooks/HaogeSettingsShelfMain.xm`：根列表 Hook、独立图标、应用项目导出接口和有界重试。
-- `HaogeSettingsShelfPrefs/HaogeSettingsShelfCategoryListController.m`：两个分类页。
-- `HaogeSettingsShelfPrefs/HaogeSettingsShelfRootListController.m`：启用面板。
-- `Sources/HaogeSettingsShelfConfig.*`：配置快照及通知刷新。
-- `Sources/HaogeSettingsShelfPaths.h`：不同 scheme 的配置与资源路径。
+- `Hooks/HaogeSettingsShelfMain.xm`：加载收纳运行时。
+- `Sources/HaogeSettingsShelfRuntime.m`：动态 Hook、保留真实数组、兼容延迟插入、分类导航和前台刷新。
+- `Sources/HaogeSettingsShelfGrouping.m`：可独立测试的分桶、重复刷新与原对象保留逻辑。
+- `HaogeSettingsShelfPrefs/HaogeSettingsShelfCategoryListController.m`：两个原生设置分类页。
+- `HaogeSettingsShelfPrefs/HaogeSettingsShelfRootListController.m`：无开关的收纳状态面板。
+- `Sources/HaogeSettingsShelfPaths.h`：官方 scheme 资源路径。

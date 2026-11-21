@@ -15,13 +15,3 @@ static inline NSString *haoge_settingsshelf_resourcePath(NSString *rootfsPath) {
     return ROOT_PATH_NS_VAR(rootfsPath);
 #endif
 }
-
-static inline NSString *haoge_settingsshelf_preferencesPath(void) {
-    NSString *path = @"/var/mobile/Library/Preferences/com.haoge.settingsshelf.plist";
-#ifdef THEOS_PACKAGE_SCHEME_ROOTHIDE
-    return jbroot(path);
-#else
-    // Mobile user preferences do not use the rootless installation prefix.
-    return path;
-#endif
-}

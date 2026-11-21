@@ -1,41 +1,37 @@
 #import "HaogeSettingsShelfRootListController.h"
-#import "HaogeSettingsShelfPreferences.h"
+#import "HaogeSettingsShelfCategoryListController.h"
 #import <Preferences/PSSpecifier.h>
-#import <UIKit/UIKit.h>
-
-
-@interface HaogeSettingsShelfRootListController ()
-@end
+#import <dlfcn.h>
 
 @implementation HaogeSettingsShelfRootListController
-
 - (NSMutableArray *)specifiers {
     if (!_specifiers) {
-        _specifiers = [[self loadSpecifiersFromPlistName:@"HaogeSettingsShelfRoot"
-                                                  target:self] mutableCopy];
+        NSDictionary *(*provider)(void) = (NSDictionary *(*)(void))dlsym(RTLD_DEFAULT, "haoge_settingsshelf_snapshot");
+        NSDictionary *status = provider ? provider() : @{};
+        NSMutableArray *rows = [NSMutableArray array];
+        PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"安装后默认生效"];
+        NSString *message = [status[@"loaded"] boolValue]
+            ? [NSString stringWithFormat:@"已收纳：越狱插件 %lu 项，应用软件 %lu 项。没有开关，旧版关闭状态不再使用。",
+                (unsigned long)[status[@"tweaks"] count], (unsigned long)[status[@"apps"] count]]
+            : @"收纳主库尚未加载。请完全退出系统设置后重新打开；此插件不再需要开启开关。";
+        [group setProperty:message forKey:@"footerText"]; [rows addObject:group];
+        for (NSString *category in @[@"tweaks", @"apps"]) {
+            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[category isEqualToString:@"apps"] ? @"应用软件" : @"越狱插件"
+                target:nil set:nil get:nil detail:HaogeSettingsShelfCategoryListController.class cell:PSLinkCell edit:nil];
+            [row setProperty:category forKey:@"HaogeSettingsShelfCategory"]; [rows addObject:row];
+        }
+        PSSpecifier *refresh = [PSSpecifier preferenceSpecifierNamed:@"重新整理设置首页" target:self
+            set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
+        [refresh setButtonAction:@selector(haoge_settingsshelf_refresh)]; [rows addObject:refresh];
+        _specifiers = rows;
     }
     return _specifiers;
 }
-
-- (id)readPreferenceValue:(PSSpecifier *)specifier {
-    NSString *key = [specifier propertyForKey:@"key"];
-    if (key.length == 0) return nil;
-    return haoge_settingsshelf_readPreferences()[key] ?: [specifier propertyForKey:@"default"];
+- (void)haoge_settingsshelf_refresh {
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"com.haoge.settingsshelf.regroup" object:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self reloadSpecifiers]; });
 }
-
-- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-    NSString *key = [specifier propertyForKey:@"key"];
-    if (key.length == 0) return;
-    NSError *error = nil;
-    if (!haoge_settingsshelf_writePreference(key, value, &error)) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"设置未保存"
-            message:error.localizedDescription ?: @"请检查配置文件路径和写入权限。"
-            preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        [self reloadSpecifiers];
-    }
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated]; [self reloadSpecifiers];
 }
-
-
 @end
