@@ -285,6 +285,18 @@ static void PlacementCases(void) {
     CHECK(haoge_settingsshelf_rootRemovalRanges(root.specifiers, expected, nav, NULL).count == 0);
 }
 
+static BOOL ReusableNavigationBeforeSystems(NSArray *current, NSArray *navigation, NSArray *systems) {
+    for (NSUInteger i = 0; i + navigation.count <= current.count; ++i) {
+        BOOL complete = YES;
+        for (NSUInteger j = 0; j < navigation.count; ++j) if (current[i + j] != navigation[j]) complete = NO;
+        if (!complete) continue;
+        BOOL beforeSystems = YES;
+        for (id system in systems) if ([current indexOfObjectIdenticalTo:system] < i) beforeSystems = NO;
+        if (beforeSystems) return YES;
+    }
+    return NO;
+}
+
 static void PermutationCases(void) {
     NSArray *nav = Navigation();
     FakeEntry *system = System(@"PERMUTATION_SYSTEM"), *app = App(@"PERMUTATION_APP");
@@ -292,7 +304,7 @@ static void PermutationCases(void) {
     // Exhaust all 5! interleavings of the three canonical navigation objects,
     // a system row, and a third-party row. Expected rows are an explicit fixture.
     Permute([@[nav[0], nav[1], nav[2], system, app] mutableCopy], 0, ^(NSArray *current) {
-        BOOL top = current[0] == nav[0] && current[1] == nav[1] && current[2] == nav[2];
+        BOOL top = ReusableNavigationBeforeSystems(current, nav, @[system]);
         Fresh([NSString stringWithFormat:@"exhaustive five-row permutation %lu", (unsigned long)visited++],
               current, nav, Join(nav, @[system]), @[], @[app], !top);
     });
@@ -313,7 +325,7 @@ static void PermutationCases(void) {
         // implementation of grouping, category detection, or removal ranges.
         NSArray *systemOrder = [current indexOfObjectIdenticalTo:wifi] < [current indexOfObjectIdenticalTo:password]
             ? @[wifi, password] : @[password, wifi];
-        BOOL top = current[0] == nav[0] && current[1] == nav[1] && current[2] == nav[2];
+        BOOL top = ReusableNavigationBeforeSystems(current, nav, @[wifi, password]);
         Fresh([NSString stringWithFormat:@"deterministic mixed shuffle %lu", (unsigned long)trial],
               current, nav, Join(nav, systemOrder), @[tweak], @[otherApp], !top);
     }
