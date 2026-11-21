@@ -77,7 +77,7 @@ int main(void) { @autoreleasepool {
     VERIFY([state.haoge_settingsshelf_tweaks[0] propertyForKey:@"target"] == replacementTarget);
     VERIFY(state.haoge_settingsshelf_tweaks[1] == delayed);
     renderedTweaks = state.haoge_settingsshelf_tweaks;
-    VERIFY(![state haoge_settingsshelf_capture:@[tweak, replacement, delayed]]);
+    VERIFY((![state haoge_settingsshelf_capture:@[tweak, replacement, delayed]]));
     VERIFY(haoge_settingsshelf_sameRows(renderedTweaks, state.haoge_settingsshelf_tweaks));
     id replacementAgain = haoge_settingsshelf_testEntry(@"kayoko",1,@{ @"lazy-bundle":@"KayokoNew" });
     VERIFY([state haoge_settingsshelf_capture:@[replacementAgain]]);
