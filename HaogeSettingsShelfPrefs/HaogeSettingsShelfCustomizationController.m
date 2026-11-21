@@ -57,7 +57,12 @@ static void haoge_settingsshelf_postPreferenceChange(void) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
         (__bridge CFStringRef)HAOGE_SETTINGSSHELF_PREFERENCES_CHANGED_NOTIFICATION, NULL, NULL, true);
 }
+static BOOL haoge_settingsshelf_customizationIdentifierAllowed(NSString *identifier) {
+    BOOL (*function)(NSString *) = (BOOL (*)(NSString *))dlsym(RTLD_DEFAULT, "haoge_settingsshelf_canCustomizeIdentifier");
+    return function && function(identifier);
+}
 static BOOL haoge_settingsshelf_storeDictionaryValue(NSString *dictionaryKey, NSString *entryKey, id value) {
+    if (!haoge_settingsshelf_customizationIdentifierAllowed(entryKey)) return NO;
     id old = haoge_settingsshelf_preferenceValue(dictionaryKey);
     NSMutableDictionary *dictionary = [old isKindOfClass:NSDictionary.class] ? [old mutableCopy] : [NSMutableDictionary dictionary];
     if (value) dictionary[entryKey] = value; else [dictionary removeObjectForKey:entryKey];
@@ -96,7 +101,8 @@ static void haoge_settingsshelf_showSaveError(UIViewController *controller) {
         for (NSDictionary *entry in haoge_settingsshelf_customizationEntriesFromRuntime()) {
             NSString *identifier = entry[@"identifier"];
             NSString *fallback = entry[@"fallbackName"] ?: entry[@"name"] ?: identifier;
-            if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) continue;
+            if (![identifier isKindOfClass:NSString.class] || identifier.length == 0 ||
+                !haoge_settingsshelf_customizationIdentifierAllowed(identifier)) continue;
             NSString *name = haoge_settingsshelf_customName(identifier, fallback);
             PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:name target:nil set:nil get:nil
                 detail:HaogeSettingsShelfCustomizationDetailController.class cell:PSLinkCell edit:nil];
@@ -108,7 +114,7 @@ static void haoge_settingsshelf_showSaveError(UIViewController *controller) {
         }
         if (rows.count == 1) {
             PSSpecifier *empty = [PSSpecifier groupSpecifierWithName:nil];
-            [empty setProperty:@"等待收纳分类加载后，可在此修改所有插件入口和分类名称、图标。" forKey:@"footerText"];
+            [empty setProperty:@"等待插件收纳分类加载后，可在此修改越狱插件入口及“越狱插件”分类的名称与图标。" forKey:@"footerText"];
             [rows addObject:empty];
         }
         _specifiers = rows;

@@ -2,10 +2,33 @@
 #import "HaogeSettingsShelfPreferences.h"
 #import "HaogeSettingsShelfPaths.h"
 #import "HaogeSettingsShelfRuntime.h"
+#import "HaogeSettingsShelfGrouping.h"
+#import "HaogeSettingsShelfCustomizationScope.h"
+#import "HaogeSettingsShelfIconGeometry.h"
 #import <Preferences/PSSpecifier.h>
 #import <ImageIO/ImageIO.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+
+static BOOL haoge_settingsshelf_bucketContainsIdentifier(NSDictionary *snapshot, NSString *bucket, NSString *identifier) {
+    id rows = snapshot[bucket];
+    if (![rows isKindOfClass:NSArray.class]) return NO;
+    for (id row in rows) {
+        if (![row respondsToSelector:@selector(identifier)]) continue;
+        id value = [row identifier];
+        if ([value isKindOfClass:NSString.class] && [value isEqualToString:identifier]) return YES;
+    }
+    return NO;
+}
+
+BOOL haoge_settingsshelf_canCustomizeIdentifier(NSString *identifier) {
+    if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) return NO;
+    NSDictionary *snapshot = haoge_settingsshelf_snapshot();
+    if (haoge_settingsshelf_bucketContainsIdentifier(snapshot, @"apps", identifier)) return NO;
+    if (haoge_settingsshelf_customizationScopeAllows(identifier, @"navigation")) return YES;
+    return haoge_settingsshelf_customizationScopeAllows(identifier, @"tweaks") &&
+        haoge_settingsshelf_bucketContainsIdentifier(snapshot, @"tweaks", identifier);
+}
 
 static char haoge_settingsshelf_originalSpecifierStateKey;
 static NSCache<NSString *, UIImage *> *haoge_settingsshelf_customIconCache;
@@ -83,7 +106,7 @@ static UIImage *haoge_settingsshelf_decodeIcon(NSString *path) {
 NSArray *haoge_settingsshelf_customizationEntries(void) {
     NSDictionary *snapshot = haoge_settingsshelf_snapshot();
     NSMutableArray *result = [NSMutableArray array];
-    for (NSString *bucket in @[@"navigation", @"tweaks", @"apps"]) {
+    for (NSString *bucket in @[@"navigation", @"tweaks"]) {
         id values = snapshot[bucket];
         if (![values isKindOfClass:NSArray.class]) continue;
         for (id specifier in values) {
@@ -91,7 +114,8 @@ NSArray *haoge_settingsshelf_customizationEntries(void) {
             NSString *identifier = [specifier respondsToSelector:@selector(identifier)] ? [specifier identifier] : nil;
             if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) continue;
             if ([specifier respondsToSelector:@selector(cellType)] && [specifier cellType] == 0) continue;
-            if ([identifier isEqualToString:@"com.haoge.settingsshelf.category.group"]) continue;
+            if (!haoge_settingsshelf_customizationScopeAllows(identifier, bucket) ||
+                !haoge_settingsshelf_canCustomizeIdentifier(identifier)) continue;
             NSMutableDictionary *state = objc_getAssociatedObject(specifier, &haoge_settingsshelf_originalSpecifierStateKey);
             id originalName = state ? (state[@"name"] == NSNull.null ? state[@"label"] : state[@"name"]) : haoge_settingsshelf_specifierName(specifier);
             if (![originalName isKindOfClass:NSString.class] || [originalName length] == 0)
@@ -111,14 +135,19 @@ NSArray *haoge_settingsshelf_customizationEntries(void) {
     return [result copy];
 }
 
-NSString *haoge_settingsshelf_displayName(NSString *identifier, NSString *fallback) {
+static NSString *haoge_settingsshelf_scopedDisplayName(NSString *identifier, NSString *fallback) {
     if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) return fallback ?: @"";
     id names = haoge_settingsshelf_preferenceValue(@"entryNames");
     id value = [names isKindOfClass:NSDictionary.class] ? names[identifier] : nil;
     return [value isKindOfClass:NSString.class] && [value length] ? value : (fallback ?: identifier);
 }
 
-UIImage *haoge_settingsshelf_customIcon(NSString *identifier) {
+NSString *haoge_settingsshelf_displayName(NSString *identifier, NSString *fallback) {
+    if (!haoge_settingsshelf_canCustomizeIdentifier(identifier)) return fallback ?: @"";
+    return haoge_settingsshelf_scopedDisplayName(identifier, fallback);
+}
+
+static UIImage *haoge_settingsshelf_scopedCustomIcon(NSString *identifier) {
     haoge_settingsshelf_installCacheObservers();
     if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) return nil;
     id icons = haoge_settingsshelf_preferenceValue(@"entryIcons");
@@ -139,9 +168,63 @@ UIImage *haoge_settingsshelf_customIcon(NSString *identifier) {
     return image;
 }
 
+static UIImage *haoge_settingsshelf_fitIcon(UIImage *image, UIImage *original, NSString *identifier);
+
+UIImage *haoge_settingsshelf_customIcon(NSString *identifier) {
+    if (!haoge_settingsshelf_canCustomizeIdentifier(identifier)) return nil;
+    UIImage *original = nil;
+    NSDictionary *snapshot = haoge_settingsshelf_snapshot();
+    for (NSString *bucket in @[@"navigation", @"tweaks"]) {
+        for (PSSpecifier *row in snapshot[bucket]) {
+            if (![row isKindOfClass:PSSpecifier.class] || ![row.identifier isEqualToString:identifier]) continue;
+            NSDictionary *state = objc_getAssociatedObject(row, &haoge_settingsshelf_originalSpecifierStateKey);
+            id icon = state ? state[@"iconImage"] : [row propertyForKey:@"iconImage"];
+            if ([icon isKindOfClass:UIImage.class]) original = icon;
+        }
+    }
+    return haoge_settingsshelf_fitIcon(haoge_settingsshelf_scopedCustomIcon(identifier), original, identifier);
+}
+
+static UIImage *haoge_settingsshelf_fitIcon(UIImage *image, UIImage *original, NSString *identifier) {
+    if (!image) return nil;
+    CGSize target = haoge_settingsshelf_originalIconSize(original ? original.size : CGSizeZero);
+    CGFloat scale = UIScreen.mainScreen.scale;
+    id icons = haoge_settingsshelf_preferenceValue(@"entryIcons");
+    id filename = [icons isKindOfClass:NSDictionary.class] ? icons[identifier] : nil;
+    NSString *key = [NSString stringWithFormat:@"fit:%@:%@:%g:%g:%g", identifier, filename, target.width, target.height, scale];
+    UIImage *cached = [haoge_settingsshelf_iconCache() objectForKey:key];
+    if (cached) return cached;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+    format.opaque = NO;
+    format.scale = scale;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:target format:format];
+    NSArray<UIImage *> *frames = image.images.count ? image.images : @[image];
+    NSMutableArray<UIImage *> *rendered = [NSMutableArray arrayWithCapacity:frames.count];
+    for (UIImage *frame in frames) {
+        UIImage *fitted = [renderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+            [frame drawInRect:haoge_settingsshelf_iconFitRect(frame.size, target)];
+        }];
+        if (fitted) [rendered addObject:fitted];
+    }
+    UIImage *result = rendered.count > 1 ? [UIImage animatedImageWithImages:rendered duration:MAX(image.duration, 0.1)] : rendered.firstObject;
+    if (result) {
+        NSUInteger cost = (NSUInteger)(target.width * target.height * scale * scale * 4) * MAX((NSUInteger)1, rendered.count);
+        [haoge_settingsshelf_iconCache() setObject:result forKey:key cost:cost];
+    }
+    return result;
+}
+
 void haoge_settingsshelf_applyCustomization(id value) {
     if (![value isKindOfClass:PSSpecifier.class]) return;
     PSSpecifier *specifier = (PSSpecifier *)value;
+    NSString *identifier = [specifier respondsToSelector:@selector(identifier)] ? [specifier identifier] : nil;
+    // Reject before capturing/restoring any state. App routing and original presentation stay untouched.
+    if (![identifier isKindOfClass:NSString.class] || !identifier.length) return;
+    NSDictionary *snapshot = haoge_settingsshelf_snapshot();
+    if (haoge_settingsshelf_bucketContainsIdentifier(snapshot, @"apps", identifier)) return;
+    BOOL navigation = haoge_settingsshelf_customizationScopeAllows(identifier, @"navigation");
+    if (!navigation && (!haoge_settingsshelf_customizationScopeAllows(identifier, @"tweaks") ||
+                        haoge_settingsshelf_entryCategory(specifier) != 1)) return;
     NSMutableDictionary *state = objc_getAssociatedObject(specifier, &haoge_settingsshelf_originalSpecifierStateKey);
     if (!state) {
         id name = haoge_settingsshelf_specifierName(specifier);
@@ -151,19 +234,18 @@ void haoge_settingsshelf_applyCustomization(id value) {
                    @"iconImage":icon ?: NSNull.null} mutableCopy];
         objc_setAssociatedObject(specifier, &haoge_settingsshelf_originalSpecifierStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    NSString *identifier = [specifier respondsToSelector:@selector(identifier)] ? [specifier identifier] : nil;
-    if (!identifier.length) return;
     id rawName = state[@"name"] == NSNull.null ? state[@"label"] : state[@"name"];
     NSString *fallback = [rawName isKindOfClass:NSString.class] ? rawName : identifier;
-    NSString *name = haoge_settingsshelf_displayName(identifier, fallback);
+    NSString *name = haoge_settingsshelf_scopedDisplayName(identifier, fallback);
     if ([specifier respondsToSelector:@selector(setName:)])
         ((void (*)(id, SEL, id))objc_msgSend)(specifier, @selector(setName:), name);
     [specifier setProperty:name forKey:@"label"];
 
-    UIImage *icon = haoge_settingsshelf_customIcon(identifier);
+    id originalIcon = state[@"iconImage"];
+    UIImage *icon = haoge_settingsshelf_fitIcon(haoge_settingsshelf_scopedCustomIcon(identifier),
+        [originalIcon isKindOfClass:UIImage.class] ? originalIcon : nil, identifier);
     if (icon) [specifier setProperty:icon forKey:@"iconImage"];
     else {
-        id originalIcon = state[@"iconImage"];
         [specifier setProperty:(originalIcon == NSNull.null ? nil : originalIcon) forKey:@"iconImage"];
     }
 }

@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "SettingsShelf",
   "id": "settingsshelf",
-  "display_name": "越狱插件和应用软件",
+  "display_name": "插件收纳",
   "class_prefix": "HaogeSettingsShelf",
   "symbol_prefix": "haoge_settingsshelf",
   "package": "com.haoge.settingsshelf",

@@ -1,4 +1,4 @@
-name: Build 越狱插件和应用软件
+name: Build 插件收纳
 
 on:
   push:
@@ -38,6 +38,12 @@ jobs:
         run: |
           xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation Validation/GuardTests.m -o "$RUNNER_TEMP/settingsshelf-guard-tests"
           "$RUNNER_TEMP/settingsshelf-guard-tests"
+      - name: Run account placement and customization size regression tests
+        run: |
+          xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation -ISources Sources/HaogeSettingsShelfGrouping.m Validation/AccountPlacementTests.m -o "$RUNNER_TEMP/settingsshelf-account-tests"
+          "$RUNNER_TEMP/settingsshelf-account-tests"
+          xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation -framework CoreGraphics -ISources Validation/CustomizationScopeTests.m -o "$RUNNER_TEMP/settingsshelf-scope-tests"
+          "$RUNNER_TEMP/settingsshelf-scope-tests"
       - name: Set package version
         id: version
         run: |
@@ -82,7 +88,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.package_version }}
-          name: 越狱插件和应用软件 v${{ steps.version.outputs.package_version }}
+          name: 插件收纳 v${{ steps.version.outputs.package_version }}
           files: |
             packages/*.deb
             packages/PackageVerification.json

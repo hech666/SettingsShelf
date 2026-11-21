@@ -35,13 +35,13 @@ int main(void) { @autoreleasepool {
     VERIFY(haoge_settingsshelf_entryCategory(nav1)==0);
     NSArray *output = [state haoge_settingsshelf_transform:raw enabled:YES navigation:nav];
     VERIFY(([output isEqualToArray:@[navGroup,nav1,nav2,systemGroup,wifi]]));
-    VERIFY(state.haoge_settingsshelf_tweaks.count==2);
+    VERIFY(state.haoge_settingsshelf_tweaks.count==1);
     VERIFY(state.haoge_settingsshelf_apps.count==1);
     VERIFY(state.haoge_settingsshelf_tweaks[0]==tweak);
     VERIFY([state.haoge_settingsshelf_tweaks[0] propertyForKey:@"target"]==[tweak propertyForKey:@"target"]);
     for (NSUInteger i=0;i<100;i++) {
         output=[state haoge_settingsshelf_transform:output enabled:YES navigation:nav];
-        VERIFY(output.count==5); VERIFY(state.haoge_settingsshelf_tweaks.count==2); VERIFY(state.haoge_settingsshelf_apps.count==1);
+        VERIFY(output.count==5); VERIFY(state.haoge_settingsshelf_tweaks.count==1); VERIFY(state.haoge_settingsshelf_apps.count==1);
     }
     id late=haoge_settingsshelf_testEntry(@"late",1,@{@"AppBundleID":@"com.late.app"});
     output=[state haoge_settingsshelf_transform:[output arrayByAddingObject:late] enabled:YES navigation:nav];

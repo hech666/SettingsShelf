@@ -82,6 +82,7 @@ static void Bucket(NSArray *actual, NSArray *entries, NSArray *targets) {
 @property(nonatomic, strong) NSMutableArray *rows;
 @property(nonatomic, copy) NSArray *navigation;
 @property(nonatomic) NSUInteger expectedRemovalIndex;
+@property(nonatomic) NSUInteger expectedInsertionIndex;
 @property(nonatomic) NSUInteger deleteCalls;
 @property(nonatomic) NSUInteger insertCalls;
 - (instancetype)initWithRows:(NSArray *)rows navigation:(NSArray *)navigation;
@@ -95,6 +96,7 @@ static void Bucket(NSArray *actual, NSArray *entries, NSArray *targets) {
         _rows = [rows mutableCopy];
         _navigation = [navigation copy];
         _expectedRemovalIndex = NSNotFound;
+        _expectedInsertionIndex = NSNotFound;
     }
     return self;
 }
@@ -114,16 +116,32 @@ static void Bucket(NSArray *actual, NSArray *entries, NSArray *targets) {
     ++self.deleteCalls;
 }
 - (void)insertContiguousSpecifiers:(NSArray *)specifiers atIndex:(NSUInteger)index animated:(BOOL)animated {
-    CHECK(!animated && index == 0);
+    CHECK(!animated && index == self.expectedInsertionIndex && index != NSNotFound);
     SameObjects(specifiers, self.navigation);
     [self.rows insertObjects:specifiers
                   atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(index, specifiers.count)]];
+    self.expectedInsertionIndex = NSNotFound;
     ++self.insertCalls;
 }
 @end
 
+static NSUInteger NavigationIndex(NSArray *rows, NSArray *navigation) {
+    CHECK(navigation.count == 3);
+    NSUInteger found = NSNotFound;
+    for (NSUInteger i = 0; i + navigation.count <= rows.count; ++i) {
+        BOOL matches = YES;
+        for (NSUInteger j = 0; j < navigation.count; ++j) {
+            if (rows[i + j] != navigation[j]) { matches = NO; break; }
+        }
+        if (matches) { CHECK(found == NSNotFound); found = i; }
+    }
+    CHECK(found != NSNotFound);
+    return found;
+}
+
 // This is the production root transaction, not an alternate grouping/removal
-// algorithm. All ranges and the insertion decision come from the real module.
+// algorithm. The expected fixture supplies the insertion location; the real
+// helper supplies the index used by the actual fake-root transaction.
 static NSArray<NSValue *> *Reconcile(FakeRoot *root, HaogeSettingsShelfGroupingState *state,
                                     NSArray *navigation, NSArray *expected, BOOL expectInsertion) {
     NSArray *current = [root specifiers];
@@ -148,7 +166,13 @@ static NSArray<NSValue *> *Reconcile(FakeRoot *root, HaogeSettingsShelfGroupingS
         root.expectedRemovalIndex = range.location;
         [root removeContiguousSpecifiers:[current subarrayWithRange:range] animated:NO];
     }
-    if (insertNavigation) [root insertContiguousSpecifiers:navigation atIndex:0 animated:NO];
+    if (insertNavigation) {
+        NSArray *remainingRows = [root specifiers];
+        NSUInteger insertionIndex = haoge_settingsshelf_navigationInsertionIndex(remainingRows);
+        CHECK(insertionIndex == NavigationIndex(expected, navigation));
+        root.expectedInsertionIndex = insertionIndex;
+        [root insertContiguousSpecifiers:navigation atIndex:insertionIndex animated:NO];
+    }
     CHECK(root.expectedRemovalIndex == NSNotFound);
     CHECK(root.deleteCalls - beforeDelete == ranges.count);
     CHECK(root.insertCalls - beforeInsert == (expectInsertion ? 1U : 0U));
@@ -299,7 +323,7 @@ static void ContinuousUpdateCases(void) {
     context = @"continuous late multi-group app/tweak insertion";
     ++cases;
     NSArray *nav = Navigation();
-    FakeEntry *systemGroup = Group(@"LIVE_SYSTEM_GROUP"), *wifi = System(@"LIVE_WIFI");
+    FakeEntry *systemGroup = Group(@"LIVE_SYSTEM_GROUP"), *wifi = System(@"WIFI");
     FakeEntry *secondGroup = Group(@"LIVE_SECURITY_GROUP"), *password = System(@"LIVE_PASSWORD");
     FakeEntry *firstTweak = Tweak(@"LIVE_ORIGINAL_TWEAK"), *firstApp = App(@"LIVE_ORIGINAL_APP");
     NSArray *system = @[systemGroup, wifi, secondGroup, password];
@@ -331,7 +355,9 @@ static void ContinuousUpdateCases(void) {
         [apps addObjectsFromArray:@[app, mixedApp]];
         [tweakTargets addObjectsFromArray:Targets(@[tweak, mixedTweak])];
         [appTargets addObjectsFromArray:Targets(@[app, mixedApp])];
-        Reconcile(root, state, nav, expected, YES);
+        // Prefix-only removals preserve an already contiguous canonical run;
+        // insertions inside the run require removing and reinserting it.
+        Reconcile(root, state, nav, expected, round != 0);
         Bucket(state.haoge_settingsshelf_tweaks, tweaks, tweakTargets);
         Bucket(state.haoge_settingsshelf_apps, apps, appTargets);
         for (NSUInteger repeat = 0; repeat < 3; ++repeat) {
@@ -349,7 +375,9 @@ static void ContinuousUpdateCases(void) {
     ++cases;
     FakeEntry *lateGroup = Group(@"LATE_HOST_SYSTEM_GROUP"), *lateSystem = System(@"LATE_HOST_SYSTEM");
     HostInsert(root, @[lateGroup, lateSystem], 2);
-    expected = Join(nav, Join(@[lateGroup, lateSystem], system));
+    // The delayed section is anchored immediately before the first network
+    // group, after the newly inserted host section; system order stays intact.
+    expected = Join(@[lateGroup, lateSystem], Join(nav, system));
     Reconcile(root, state, nav, expected, YES);
     Bucket(state.haoge_settingsshelf_tweaks, tweaks, tweakTargets);
     Bucket(state.haoge_settingsshelf_apps, apps, appTargets);

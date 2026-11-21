@@ -60,13 +60,16 @@ def main():
         version=subprocess.check_output(['dpkg-deb','-f',str(deb),'Version'],text=True).strip()
         expected=os.getenv('EXPECTED_PACKAGE_VERSION');assert not expected or version==expected
         name=subprocess.check_output(['dpkg-deb','-f',str(deb),'Name'],text=True).strip()
-        assert name=='越狱插件和应用软件'
+        assert name=='插件收纳'
         filtr=plistlib.loads(mains[0].with_suffix('.plist').read_bytes())
         assert filtr=={'Filter':{'Bundles':['com.apple.Preferences']}}
         resources=prefs[0].parent;icons={}
         main_bytes=mains[0].read_bytes();prefs_bytes=prefs[0].read_bytes()
         assert b'HaogeSettingsShelfConfig' not in main_bytes, 'legacy enable gate present'
-        assert b'root-list flow active; navigation at top' in main_bytes, 'missing top-navigation runtime'
+        assert b'root-list flow active; navigation between account and connectivity' in main_bytes, 'missing account-connectivity navigation runtime'
+        assert b'HaogeSettingsShelfRootListController' not in prefs_bytes, 'standalone status page remains'
+        assert not list(base.rglob('HaogeSettingsShelfPrefs.plist')), 'standalone PreferenceLoader entry remains'
+        assert plistlib.loads((resources/'Info.plist').read_bytes())['CFBundleName']=='插件收纳'
         for key in (b'suppressBatteryServiceWarnings',b'suppressSoftwareUpdatePrompt',b'entryNames',b'entryIcons'):
             assert key in main_bytes and key in prefs_bytes, ('missing functional preference',key)
         assert b'HaogeSettingsShelfCustomization' in prefs_bytes, 'customization UI missing'

@@ -51,14 +51,13 @@ static void haoge_settingsshelf_categoryNotify(void) {
     if (!_specifiers) {
         BOOL apps = [[self.specifier propertyForKey:@"HaogeSettingsShelfCategory"] isEqualToString:@"apps"];
         NSString *category = apps ? @"apps" : @"tweaks";
-        NSString *fallbackHeading = apps ? @"应用软件" : @"越狱插件";
-        NSString *heading = haoge_settingsshelf_categoryDisplayName([@"com.haoge.settingsshelf.category." stringByAppendingString:category], fallbackHeading);
+        NSString *heading = apps ? @"应用软件" : haoge_settingsshelf_categoryDisplayName(@"com.haoge.settingsshelf.category.tweaks", @"越狱插件");
         self.title = heading;
         NSMutableArray *rows = [NSMutableArray arrayWithObject:[PSSpecifier groupSpecifierWithName:heading]];
         NSArray *items = [self haoge_settingsshelf_snapshot][category];
         for (id entry in items) {
             if (![entry isKindOfClass:PSSpecifier.class]) continue;
-            haoge_settingsshelf_categoryApply(entry);
+            if (!apps) haoge_settingsshelf_categoryApply(entry);
             [rows addObject:entry];
         }
         if (rows.count == 1) {

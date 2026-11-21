@@ -4,10 +4,10 @@
 <dict>
     <key>CFBundleExecutable</key><string>HaogeSettingsShelfPrefs</string>
     <key>CFBundleIdentifier</key><string>com.haoge.settingsshelf.preferences</string>
-    <key>CFBundleName</key><string>越狱插件和应用软件</string>
+    <key>CFBundleName</key><string>插件收纳</string>
     <key>CFBundlePackageType</key><string>BNDL</string>
     <key>CFBundleShortVersionString</key><string>5.2.0</string>
     <key>CFBundleVersion</key><string>5.2.0</string>
-    <key>NSPrincipalClass</key><string>HaogeSettingsShelfRootListController</string>
+    <key>NSPrincipalClass</key><string>HaogeSettingsShelfCategoryListController</string>
 </dict>
 </plist>

@@ -1,4 +1,4 @@
-# SettingsShelf / 越狱插件和应用软件
+# SettingsShelf / 插件收纳
 
 独立 iOS 设置收纳插件，包标识 `com.haoge.settingsshelf`。仅注入 `com.apple.Preferences`；最低 iOS 15.0，主要待测环境为 iOS 16 / Roothide。**安装后默认生效，没有启用开关；旧版保存的 enabled 值不再读取。**设置首页只保留两个分类入口：
 
@@ -12,9 +12,11 @@
 - 将识别出的越狱插件设置、第三方应用设置从首页移入两个分类，系统设置仍在原位。
 - 保留原始 PSSpecifier、target、图标、lazy-bundle 和跳转信息，不扫描磁盘拼造第三方设置链接。
 - 仅 Hook 设置根控制器；初始化列表时才修改数组，已加载页面通过 Preferences 原生连续移除／插入 API 更新，不对活表调用 `setSpecifiers:` 或 `reloadData`。
-- 分类导航组固定放在首页最前；完整移动三项导航，兼容系统延迟插入及重复整理。
+- 分类导航组固定放在 Apple ID／头像账户组下方、飞行模式／Wi-Fi 网络组上方；完整移动三项导航，兼容系统延迟插入及重复整理。
+- 不提供插件自身的独立设置项；两个分类入口及“越狱插件”内的附加功能保持可用。
 - “越狱插件”分类下直接提供“附加功能”：屏蔽部件与维修记录、屏蔽系统更新提示、自定义名称与图标。两个屏蔽项独立、默认关闭；收纳仍始终启用。
-- 自定义只修改显示名称／图标，保留原 identifier、target、深链及 lazy-bundle；使用自家偏好域，不改写第三方 plist。
+- 自定义仅对越狱插件入口和“越狱插件”分类生效；应用软件及其分类不展示自定义项，忽略旧应用映射，不删除用户存储。保留原 identifier、target、深链及 lazy-bundle；使用自家偏好域，不改写第三方 plist。
+- 自定义图标按原图标的 point 尺寸重绘，保留透明度、图片比例及 GIF 帧；无原始图标时使用 30×30 pt。
 - 不包含原 TweaksHub 二进制；新增功能依据静态证据独立实现，不声称逐字节还原原版。
 - 与 TweaksHub、Shuffle 等同类设置重排插件声明冲突。
 
@@ -23,7 +25,7 @@
 - 维修屏蔽限定设置进程内的维修／电池提示展示；仅对实际存在且 ABI 匹配的私有接口安装钩子。未修改硬件数据，也不改变系统诊断结果。
 - 更新屏蔽针对设置首页的更新提示行及仅包含提示的分组，不禁用 OTA 服务或更新下载。
 - 自定义图标从用户选定文件或目录导入自家目录，支持 PNG/JPG/JPEG/GIF 与倍率后缀；恢复默认会删除显式名称和图标映射，重新显示原始入口名称与图标。
-- v5 仅收纳版本已获用户真机确认；这次新增功能与置顶逻辑需重新真机回归。编译、静态匹配和签名检查不能替代该验证。
+- v6 已有用户截图确认分类在首页最前并可进入附加功能；这次位置调整、范围精简和图标尺寸保持需重新真机回归。编译、静态匹配和签名检查不能替代该验证。
 
 ## GitHub 云编译
 
@@ -57,5 +59,5 @@ sh build.sh rootless
 - `Sources/HaogeSettingsShelfRuntime.m`：动态 Hook、保留真实数组、兼容延迟插入、分类导航和前台刷新。
 - `Sources/HaogeSettingsShelfGrouping.m`：可独立测试的分桶、重复刷新与原对象保留逻辑。
 - `HaogeSettingsShelfPrefs/HaogeSettingsShelfCategoryListController.m`：两个原生设置分类页。
-- `HaogeSettingsShelfPrefs/HaogeSettingsShelfRootListController.m`：无开关的收纳状态面板。
+- `HaogeSettingsShelfPrefs/HaogeSettingsShelfCustomizationController.m`：仅越狱插件的名称／图标编辑与文件导入。
 - `Sources/HaogeSettingsShelfPaths.h`：官方 scheme 资源路径。

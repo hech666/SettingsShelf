@@ -33,7 +33,8 @@ static HaogeSettingsShelfGroupingState *haoge_settingsshelf_state(id root) {
 }
 static NSArray *haoge_settingsshelf_navigationRows(void) {
     if (haoge_settingsshelf_navigation.count == 3) {
-        for (id row in haoge_settingsshelf_navigation) if ([row cellType] != 0) haoge_settingsshelf_applyCustomization(row);
+        for (PSSpecifier *row in haoge_settingsshelf_navigation)
+            if ([row.identifier isEqualToString:@"com.haoge.settingsshelf.category.tweaks"]) haoge_settingsshelf_applyCustomization(row);
         return haoge_settingsshelf_navigation;
     }
     Class detail = NSClassFromString(@"HaogeSettingsShelfCategoryListController");
@@ -47,7 +48,7 @@ static NSArray *haoge_settingsshelf_navigationRows(void) {
     }
     if (!detail) return @[];
     NSMutableArray *rows = [NSMutableArray array];
-    PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"越狱插件和应用软件"];
+    PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"插件收纳"];
     group.identifier = @"com.haoge.settingsshelf.category.group"; [rows addObject:group];
     for (NSString *category in @[@"tweaks", @"apps"]) {
         BOOL apps = [category isEqualToString:@"apps"];
@@ -59,7 +60,7 @@ static NSArray *haoge_settingsshelf_navigationRows(void) {
         NSString *imagePath = [haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle") stringByAppendingPathComponent:file];
         UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
         if (image.CGImage) [row setProperty:[UIImage imageWithCGImage:image.CGImage scale:2 orientation:UIImageOrientationUp] forKey:@"iconImage"];
-        haoge_settingsshelf_applyCustomization(row);
+        if (!apps) haoge_settingsshelf_applyCustomization(row);
         [rows addObject:row];
     }
     haoge_settingsshelf_navigation = [rows copy]; return haoge_settingsshelf_navigation;
@@ -78,7 +79,6 @@ static NSArray *haoge_settingsshelf_prepareRows(PSListController *root, NSArray 
     HaogeSettingsShelfGroupingState *state = haoge_settingsshelf_state(root);
     NSArray *desired = [state haoge_settingsshelf_transform:current enabled:YES navigation:navigation];
     for (id row in state.haoge_settingsshelf_tweaks) haoge_settingsshelf_applyCustomization(row);
-    for (id row in state.haoge_settingsshelf_apps) haoge_settingsshelf_applyCustomization(row);
     return haoge_settingsshelf_guardRootRows(desired);
 }
 // Match TweaksHub's deferred root insertion flow: let the system transaction
@@ -102,7 +102,10 @@ static void haoge_settingsshelf_reconcile(PSListController *root) {
             if (run.count) [root removeContiguousSpecifiers:run animated:NO];
         }
 
-        if (insertNavigation) [root insertContiguousSpecifiers:navigation atIndex:0 animated:NO];
+        if (insertNavigation) {
+            NSUInteger insertionIndex = haoge_settingsshelf_navigationInsertionIndex([root specifiers]);
+            [root insertContiguousSpecifiers:navigation atIndex:insertionIndex animated:NO];
+        }
         haoge_settingsshelf_root = root; ++haoge_settingsshelf_hits;
     } @finally { --haoge_settingsshelf_busy; }
 }
@@ -241,6 +244,6 @@ void haoge_settingsshelf_start(void) {
             }];
         for (NSUInteger i = 0; i < 16; ++i) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ haoge_settingsshelf_installRootHooks(); });
         haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_installGuards();
-        NSLog(@"[SettingsShelf] root-list flow active; navigation at top");
+        NSLog(@"[SettingsShelf] root-list flow active; navigation between account and connectivity");
     });
 }
