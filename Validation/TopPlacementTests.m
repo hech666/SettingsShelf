@@ -393,13 +393,11 @@ static void ContinuousUpdateCases(void) {
     Reconcile(root, state, nav, expected, YES);
     Bucket(state.haoge_settingsshelf_tweaks, tweaks, tweakTargets);
     Bucket(state.haoge_settingsshelf_apps, apps, appTargets);
-    NSArray *raw = [state.haoge_settingsshelf_raw copy];
     NSUInteger beforeDelete = root.deleteCalls, beforeInsert = root.insertCalls;
     for (NSUInteger repeat = 0; repeat < 32; ++repeat) {
         CHECK(Reconcile(root, state, nav, expected, NO).count == 0);
     }
     CHECK(root.deleteCalls == beforeDelete && root.insertCalls == beforeInsert);
-    SameObjects(state.haoge_settingsshelf_raw, raw);
     Bucket(state.haoge_settingsshelf_tweaks, tweaks, tweakTargets);
     Bucket(state.haoge_settingsshelf_apps, apps, appTargets);
 }

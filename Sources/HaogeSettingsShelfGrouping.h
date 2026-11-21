@@ -2,9 +2,10 @@
 #import <Foundation/Foundation.h>
 
 @interface HaogeSettingsShelfGroupingState : NSObject
-@property (nonatomic, copy) NSArray *haoge_settingsshelf_raw;
-@property (nonatomic, copy) NSArray *haoge_settingsshelf_tweaks;
-@property (nonatomic, copy) NSArray *haoge_settingsshelf_apps;
+@property (nonatomic, copy, readonly) NSArray *haoge_settingsshelf_tweaks;
+@property (nonatomic, copy, readonly) NSArray *haoge_settingsshelf_apps;
+// Observe genuine host rows without changing the host array.
+- (BOOL)haoge_settingsshelf_capture:(NSArray *)rows;
 - (NSArray *)haoge_settingsshelf_transform:(NSArray *)input enabled:(BOOL)enabled navigation:(NSArray *)navigation;
 @end
 

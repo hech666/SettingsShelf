@@ -1,4 +1,5 @@
 #import "HaogeSettingsShelfGrouping.h"
+#import "HaogeSettingsShelfSnapshot.h"
 
 @protocol HaogeSettingsShelfEntry <NSObject>
 - (NSString *)identifier;
@@ -33,12 +34,6 @@ NSInteger haoge_settingsshelf_entryCategory(id object) {
         if ([key isEqualToString:@"lazy-bundle"]) return 1;
     }
     return 0;
-}
-
-static BOOL haoge_settingsshelf_sameEntry(id left, id right) {
-    if (left == right) return YES;
-    NSString *a = haoge_settingsshelf_identifier(left), *b = haoge_settingsshelf_identifier(right);
-    return a.length && [a isEqualToString:b];
 }
 
 static NSString *haoge_settingsshelf_anchorIdentifier(id row) {
@@ -121,66 +116,91 @@ NSArray<NSValue *> *haoge_settingsshelf_rootRemovalRanges(
     return ranges;
 }
 
-@implementation HaogeSettingsShelfGroupingState
+// Category scope separates an app from a tweak using the same identifier.
+// An identifier-free row is keyed by its host-provided source, never its
+// display name (which can change after customization).
+static NSString *haoge_settingsshelf_observationKey(id<HaogeSettingsShelfEntry> row, NSInteger category) {
+    NSString *identifier = haoge_settingsshelf_identifier(row);
+    if (identifier.length) return [@"id:" stringByAppendingString:identifier];
+    NSArray *keys = category == 1 ? @[@"lazy-bundle", @"bundlePath", @"bundle"] :
+        @[@"AppBundleID", @"appIDForLazyIcon", @"applicationBundleIdentifier"];
+    for (NSString *key in keys) {
+        id value = [row propertyForKey:key];
+        if ([value isKindOfClass:NSBundle.class]) value = [value bundlePath];
+        if (![value isKindOfClass:NSString.class] || ![value length]) continue;
+        if (category == 1 && ([value hasPrefix:@"/System/"] || [value containsString:@"/System/Library/"] ||
+            (![key isEqualToString:@"lazy-bundle"] && ![value containsString:@"/Library/PreferenceBundles/"]))) continue;
+        if (category == 2 && [value hasPrefix:@"com.apple."]) continue;
+        return [@"source:" stringByAppendingString:value];
+    }
+    return nil;
+}
+
+@implementation HaogeSettingsShelfGroupingState {
+    NSMutableOrderedSet<NSString *> *_haoge_settingsshelf_tweakKeys;
+    NSMutableOrderedSet<NSString *> *_haoge_settingsshelf_appKeys;
+    NSMutableDictionary<NSString *, id> *_haoge_settingsshelf_tweakRows;
+    NSMutableDictionary<NSString *, id> *_haoge_settingsshelf_appRows;
+}
 - (instancetype)init {
     if ((self = [super init])) {
-        _haoge_settingsshelf_raw = @[]; _haoge_settingsshelf_tweaks = @[]; _haoge_settingsshelf_apps = @[];
+        _haoge_settingsshelf_tweakKeys = [NSMutableOrderedSet orderedSet];
+        _haoge_settingsshelf_appKeys = [NSMutableOrderedSet orderedSet];
+        _haoge_settingsshelf_tweakRows = [NSMutableDictionary dictionary];
+        _haoge_settingsshelf_appRows = [NSMutableDictionary dictionary];
+        _haoge_settingsshelf_tweaks = @[];
+        _haoge_settingsshelf_apps = @[];
     }
     return self;
 }
+- (BOOL)haoge_settingsshelf_capture:(NSArray *)rows {
+    if (![rows isKindOfClass:NSArray.class]) return NO;
+    BOOL changedTweaks = NO, changedApps = NO;
+    // There is no reliable full-inventory marker: even an array without our
+    // navigation may be a partial reload. Retain observations for this root only.
+    for (id row in rows) {
+        if (haoge_settingsshelf_isSelfEntry(row)) continue;
+        NSInteger category = haoge_settingsshelf_entryCategory(row);
+        if (!category) continue;
+        NSString *key = haoge_settingsshelf_observationKey(row, category);
+        if (!key.length) continue;
+        NSMutableOrderedSet *keys = category == 1 ? _haoge_settingsshelf_tweakKeys : _haoge_settingsshelf_appKeys;
+        NSMutableDictionary *entries = category == 1 ? _haoge_settingsshelf_tweakRows : _haoge_settingsshelf_appRows;
+        if (entries[key] == row) continue;
+        [keys addObject:key];
+        entries[key] = row;
+        if (category == 1) changedTweaks = YES; else changedApps = YES;
+    }
+    NSArray *tweaks = changedTweaks ? [_haoge_settingsshelf_tweakRows objectsForKeys:_haoge_settingsshelf_tweakKeys.array notFoundMarker:NSNull.null] : _haoge_settingsshelf_tweaks;
+    NSArray *apps = changedApps ? [_haoge_settingsshelf_appRows objectsForKeys:_haoge_settingsshelf_appKeys.array notFoundMarker:NSNull.null] : _haoge_settingsshelf_apps;
+    changedTweaks = !haoge_settingsshelf_sameRows(_haoge_settingsshelf_tweaks, tweaks);
+    changedApps = !haoge_settingsshelf_sameRows(_haoge_settingsshelf_apps, apps);
+    if (changedTweaks) _haoge_settingsshelf_tweaks = [tweaks copy];
+    if (changedApps) _haoge_settingsshelf_apps = [apps copy];
+    return changedTweaks || changedApps;
+}
 - (NSArray *)haoge_settingsshelf_transform:(NSArray *)input enabled:(BOOL)enabled navigation:(NSArray *)navigation {
     if (![input isKindOfClass:NSArray.class]) return input;
-    BOOL alreadyGrouped = NO;
-    for (id entry in input) if (haoge_settingsshelf_isNavigation(entry)) { alreadyGrouped = YES; break; }
-    NSMutableArray *raw = alreadyGrouped ? [self.haoge_settingsshelf_raw mutableCopy] : [NSMutableArray array];
+    [self haoge_settingsshelf_capture:input];
+    if (!enabled || navigation.count != 3) return input;
+    NSMutableArray *kept = [NSMutableArray array];
+    id pendingGroup = nil;
+    BOOL groupHadMoved = NO;
+    // System rows and their order are drawn only from the current host list.
+    // Suppress a group only if its current rows all moved out of the root.
     for (id entry in input) {
         if (haoge_settingsshelf_isNavigation(entry)) continue;
-        NSUInteger found = NSNotFound;
-        for (NSUInteger i = 0; i < raw.count; ++i) if (haoge_settingsshelf_sameEntry(raw[i], entry)) { found = i; break; }
-        if (found == NSNotFound) [raw addObject:entry]; else raw[found] = entry;
-    }
-    self.haoge_settingsshelf_raw = raw;
-    if (!enabled || navigation.count != 3) return [raw copy];
-    NSMutableArray *tweaks = [NSMutableArray array], *apps = [NSMutableArray array];
-    for (id entry in raw) {
-        if (haoge_settingsshelf_isSelfEntry(entry)) continue;
-        NSInteger category = haoge_settingsshelf_entryCategory(entry);
-        if (category) [category == 1 ? tweaks : apps addObject:entry];
-    }
-    // Track empty third-party headers against the captured source, not an
-    // insertion that temporarily splits an existing system section.
-    NSHashTable *movedGroups = [NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality | NSPointerFunctionsStrongMemory];
-    id sourceGroup = nil; BOOL sourceMoved = NO, sourceSystem = NO;
-    for (id entry in raw) {
         if (haoge_settingsshelf_isGroup(entry)) {
-            if (sourceGroup && sourceMoved && !sourceSystem) [movedGroups addObject:sourceGroup];
-            sourceGroup = entry; sourceMoved = NO; sourceSystem = NO;
-        } else if (haoge_settingsshelf_isSelfEntry(entry) || haoge_settingsshelf_entryCategory(entry)) sourceMoved = YES;
-        else sourceSystem = YES;
-    }
-    if (sourceGroup && sourceMoved && !sourceSystem) [movedGroups addObject:sourceGroup];
-    NSMutableArray *kept = [NSMutableArray array];
-    id pendingGroup = nil; BOOL groupHadMoved = NO; NSUInteger keptSinceGroup = 0;
-    // Only the third-party buckets are historical. System order and membership
-    // always come from the current host snapshot, including a late Apple ID.
-    for (id entry in alreadyGrouped ? input : raw) {
-        if (haoge_settingsshelf_isNavigation(entry) || [movedGroups containsObject:entry]) continue;
-        if (haoge_settingsshelf_isGroup(entry)) {
-            if (pendingGroup && (!groupHadMoved || keptSinceGroup)) [kept addObject:pendingGroup];
-            pendingGroup = entry; groupHadMoved = NO; keptSinceGroup = 0;
-            continue;
-        }
-        if (haoge_settingsshelf_isSelfEntry(entry)) { groupHadMoved = YES; continue; }
-        NSInteger category = haoge_settingsshelf_entryCategory(entry);
-        if (category) {
+            if (pendingGroup && !groupHadMoved) [kept addObject:pendingGroup];
+            pendingGroup = entry; groupHadMoved = NO;
+        } else if (haoge_settingsshelf_isSelfEntry(entry) || haoge_settingsshelf_entryCategory(entry)) {
             groupHadMoved = YES;
         } else {
             if (pendingGroup) { [kept addObject:pendingGroup]; pendingGroup = nil; }
-            [kept addObject:entry]; ++keptSinceGroup;
+            [kept addObject:entry];
         }
     }
     if (pendingGroup && !groupHadMoved) [kept addObject:pendingGroup];
-    self.haoge_settingsshelf_tweaks = tweaks; self.haoge_settingsshelf_apps = apps;
     NSMutableArray *result = [kept mutableCopy];
     NSUInteger index = haoge_settingsshelf_navigationInsertionIndex(kept);
     [result insertObjects:navigation atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(index, navigation.count)]];

@@ -1,5 +1,6 @@
 #import "HaogeSettingsShelfCategoryListController.h"
 #import "../Sources/HaogeSettingsShelfPreferences.h"
+#import "../Sources/HaogeSettingsShelfSnapshot.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import <dlfcn.h>
 
@@ -18,7 +19,13 @@ static void haoge_settingsshelf_categoryNotify(void) {
         (__bridge CFStringRef)HAOGE_SETTINGSSHELF_PREFERENCES_CHANGED_NOTIFICATION, NULL, NULL, true);
 }
 
-@implementation HaogeSettingsShelfCategoryListController
+@implementation HaogeSettingsShelfCategoryListController {
+    NSArray *_haoge_settingsshelf_renderedItems;
+    BOOL _haoge_settingsshelf_visible;
+}
+- (NSString *)haoge_settingsshelf_categoryKey {
+    return [[self.specifier propertyForKey:@"HaogeSettingsShelfCategory"] isEqualToString:@"apps"] ? @"apps" : @"tweaks";
+}
 - (NSDictionary *)haoge_settingsshelf_snapshot {
     NSDictionary *(*provider)(void) = (NSDictionary *(*)(void))dlsym(RTLD_DEFAULT, "haoge_settingsshelf_snapshot");
     id value = provider ? provider() : nil;
@@ -49,12 +56,13 @@ static void haoge_settingsshelf_categoryNotify(void) {
 }
 - (NSMutableArray *)specifiers {
     if (!_specifiers) {
-        BOOL apps = [[self.specifier propertyForKey:@"HaogeSettingsShelfCategory"] isEqualToString:@"apps"];
-        NSString *category = apps ? @"apps" : @"tweaks";
+        NSString *category = [self haoge_settingsshelf_categoryKey];
+        BOOL apps = [category isEqualToString:@"apps"];
         NSString *heading = apps ? @"应用软件" : haoge_settingsshelf_categoryDisplayName(@"com.haoge.settingsshelf.category.tweaks", @"越狱插件");
         self.title = heading;
         NSMutableArray *rows = [NSMutableArray arrayWithObject:[PSSpecifier groupSpecifierWithName:heading]];
-        NSArray *items = [self haoge_settingsshelf_snapshot][category];
+        NSArray *items = [self haoge_settingsshelf_snapshot][category] ?: @[];
+        _haoge_settingsshelf_renderedItems = items;
         for (id entry in items) {
             if (![entry isKindOfClass:PSSpecifier.class]) continue;
             if (!apps) haoge_settingsshelf_categoryApply(entry);
@@ -78,9 +86,33 @@ static void haoge_settingsshelf_categoryNotify(void) {
     }
     return _specifiers;
 }
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(haoge_settingsshelf_snapshotChanged:)
+        name:HAOGE_SETTINGSSHELF_SNAPSHOT_CHANGED_NOTIFICATION object:nil];
+}
+- (void)haoge_settingsshelf_reloadCategory {
+    // Invalidate this controller's own cache; the native controller owns the
+    // list/table transaction. Never edit an array already in use by Preferences.
     _specifiers = nil;
     [self reloadSpecifiers];
+}
+- (void)haoge_settingsshelf_snapshotChanged:(__unused NSNotification *)notification {
+    if (!_haoge_settingsshelf_visible) return;
+    NSArray *items = [self haoge_settingsshelf_snapshot][[self haoge_settingsshelf_categoryKey]];
+    if (!haoge_settingsshelf_sameRows(_haoge_settingsshelf_renderedItems, items)) [self haoge_settingsshelf_reloadCategory];
+}
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self haoge_settingsshelf_reloadCategory];
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    _haoge_settingsshelf_visible = YES;
+    [self haoge_settingsshelf_snapshotChanged:nil];
+}
+- (void)viewWillDisappear:(BOOL)animated {
+    _haoge_settingsshelf_visible = NO;
+    [super viewWillDisappear:animated];
 }
 @end

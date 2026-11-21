@@ -1,5 +1,6 @@
 #import "HaogeSettingsShelfRuntime.h"
 #import "HaogeSettingsShelfGrouping.h"
+#import "HaogeSettingsShelfSnapshot.h"
 #import "HaogeSettingsShelfPaths.h"
 #import "HaogeSettingsShelfGuards.h"
 #import "HaogeSettingsShelfCustomization.h"
@@ -16,7 +17,10 @@ static Class haoge_settingsshelf_rootClass;
 static NSArray *haoge_settingsshelf_navigation;
 static NSUInteger haoge_settingsshelf_hits;
 static __thread NSUInteger haoge_settingsshelf_busy;
+static __thread BOOL haoge_settingsshelf_reconciling;
 static BOOL haoge_settingsshelf_reconcilePending;
+static __weak PSListController *haoge_settingsshelf_pendingRoot;
+static BOOL haoge_settingsshelf_snapshotPending;
 static NSMutableSet *haoge_settingsshelf_installed;
 static IMP haoge_settingsshelf_originalSpecifiers;
 
@@ -75,6 +79,22 @@ NSDictionary *haoge_settingsshelf_snapshot(void) {
         @"navigation":haoge_settingsshelf_navigation ?: @[]};
 }
 
+// Deliver out of the native root transaction and coalesce multiple getter reads.
+static void haoge_settingsshelf_scheduleSnapshot(void) {
+    if (haoge_settingsshelf_snapshotPending) return;
+    haoge_settingsshelf_snapshotPending = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        haoge_settingsshelf_snapshotPending = NO;
+        [[NSNotificationCenter defaultCenter] postNotificationName:HAOGE_SETTINGSSHELF_SNAPSHOT_CHANGED_NOTIFICATION object:nil];
+    });
+}
+static void haoge_settingsshelf_captureRows(PSListController *root, NSArray *rows) {
+    BOOL rootChanged = haoge_settingsshelf_root != root;
+    haoge_settingsshelf_root = root;
+    BOOL changed = [haoge_settingsshelf_state(root) haoge_settingsshelf_capture:rows];
+    if (rootChanged || changed) haoge_settingsshelf_scheduleSnapshot();
+}
+
 static NSArray *haoge_settingsshelf_prepareRows(PSListController *root, NSArray *current, NSArray *navigation) {
     HaogeSettingsShelfGroupingState *state = haoge_settingsshelf_state(root);
     NSArray *desired = [state haoge_settingsshelf_transform:current enabled:YES navigation:navigation];
@@ -86,9 +106,14 @@ static NSArray *haoge_settingsshelf_prepareRows(PSListController *root, NSArray 
 static void haoge_settingsshelf_reconcile(PSListController *root) {
     if (!root || !haoge_settingsshelf_isRoot(root) || haoge_settingsshelf_busy || ![NSThread isMainThread]) return;
     ++haoge_settingsshelf_busy;
+    haoge_settingsshelf_reconciling = YES;
     @try {
         NSArray *current = [root specifiers];
         if (![current isKindOfClass:NSArray.class]) return;
+        // Save original identities and indices even if the native API mutates
+        // its backing array in place during reverse-order removals.
+        current = [current copy];
+        haoge_settingsshelf_captureRows(root, current);
         NSArray *navigation = haoge_settingsshelf_navigationRows();
         if (navigation.count != 3) return;
         // Fail closed on a host without the native insertion API. Do not
@@ -107,29 +132,39 @@ static void haoge_settingsshelf_reconcile(PSListController *root) {
             [root insertContiguousSpecifiers:navigation atIndex:insertionIndex animated:NO];
         }
         haoge_settingsshelf_root = root; ++haoge_settingsshelf_hits;
-    } @finally { --haoge_settingsshelf_busy; }
+    } @finally {
+        haoge_settingsshelf_reconciling = NO;
+        --haoge_settingsshelf_busy;
+    }
 }
 static void haoge_settingsshelf_schedule(id controller) {
-    if (!haoge_settingsshelf_isRoot(controller) || haoge_settingsshelf_busy || haoge_settingsshelf_reconcilePending) return;
+    if (![NSThread isMainThread] || !haoge_settingsshelf_isRoot(controller) || haoge_settingsshelf_busy) return;
+    haoge_settingsshelf_pendingRoot = controller;
+    if (haoge_settingsshelf_reconcilePending) return;
     haoge_settingsshelf_reconcilePending = YES;
-    __weak PSListController *weakRoot = controller;
     dispatch_async(dispatch_get_main_queue(), ^{
         haoge_settingsshelf_reconcilePending = NO;
-        haoge_settingsshelf_reconcile(weakRoot);
+        PSListController *root = haoge_settingsshelf_pendingRoot;
+        haoge_settingsshelf_pendingRoot = nil;
+        haoge_settingsshelf_reconcile(root);
     });
 }
 
 static id haoge_settingsshelf_specifiersHook(id controller, SEL selector) {
     NSArray *rows = ((id (*)(id, SEL))haoge_settingsshelf_originalSpecifiers)(controller, selector);
-    if (haoge_settingsshelf_busy || !haoge_settingsshelf_isRoot(controller) || ![rows isKindOfClass:NSArray.class]) return rows;
-    haoge_settingsshelf_root = controller; ++haoge_settingsshelf_hits;
-    // Only mutate the initial mutable list before its table is loaded, as the
-    // original specifiers hook does. Live tables are changed via PSListController APIs.
+    if (![NSThread isMainThread] || haoge_settingsshelf_reconciling || !haoge_settingsshelf_isRoot(controller) ||
+        ![rows isKindOfClass:NSArray.class]) return rows;
+    // A native reload can expose useful rows briefly while busy. Observe them,
+    // but never reorder the host list inside that transaction.
+    haoge_settingsshelf_captureRows(controller, rows);
+    ++haoge_settingsshelf_hits;
+    if (haoge_settingsshelf_busy) return rows;
+    // Keep the existing cold-list path; live tables use native transactions.
     if ([controller isViewLoaded]) { haoge_settingsshelf_schedule(controller); return rows; }
     NSArray *navigation = haoge_settingsshelf_navigationRows();
     NSArray *result = haoge_settingsshelf_prepareRows(controller, rows, navigation);
     NSMutableArray *live = [rows isKindOfClass:NSMutableArray.class] ? (NSMutableArray *)rows : [rows mutableCopy];
-    if (![live isEqualToArray:result]) [live setArray:result];
+    if (!haoge_settingsshelf_sameRows(live, result)) [live setArray:result];
     return live;
 }
 
@@ -142,10 +177,7 @@ static void haoge_settingsshelf_installBoolHook(Class cls, NSString *name) {
         ++haoge_settingsshelf_busy;
         @try { ((void (*)(id, SEL, BOOL))original)(controller, selector, flag); }
         @finally { --haoge_settingsshelf_busy; }
-        if (haoge_settingsshelf_isRoot(controller)) {
-            haoge_settingsshelf_root = controller;
-            if (!haoge_settingsshelf_busy) haoge_settingsshelf_schedule(controller);
-        }
+        haoge_settingsshelf_schedule(controller);
     });
     MSHookMessageEx(cls, selector, replacement, &original);
     if (original) [haoge_settingsshelf_installed addObject:installedKey];
@@ -177,9 +209,7 @@ static void haoge_settingsshelf_installRootHooks(void) {
             ++haoge_settingsshelf_busy;
             @try { ((void (*)(id, SEL, id, NSInteger, BOOL))original)(controller, insertSelector, rows, index, animated); }
             @finally { --haoge_settingsshelf_busy; }
-            if (haoge_settingsshelf_isRoot(controller) && !haoge_settingsshelf_busy) {
-                haoge_settingsshelf_root = controller; haoge_settingsshelf_schedule(controller);
-            }
+            haoge_settingsshelf_schedule(controller);
         });
         MSHookMessageEx(cls, insertSelector, replacement, &original);
         if (original) [haoge_settingsshelf_installed addObject:insertKey];
@@ -196,9 +226,7 @@ static void haoge_settingsshelf_installRootHooks(void) {
             ++haoge_settingsshelf_busy;
             @try { ((void (*)(id, SEL))original)(controller, reloadSelector); }
             @finally { --haoge_settingsshelf_busy; }
-            if (haoge_settingsshelf_isRoot(controller) && !haoge_settingsshelf_busy) {
-                haoge_settingsshelf_root = controller; haoge_settingsshelf_schedule(controller);
-            }
+            haoge_settingsshelf_schedule(controller);
         });
         MSHookMessageEx(cls, reloadSelector, replacement, &original);
         if (original) [haoge_settingsshelf_installed addObject:reloadKey];

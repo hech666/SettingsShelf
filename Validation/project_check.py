@@ -27,7 +27,12 @@ assert 'haoge_settingsshelf_applyCustomization' in runtime
 assert 'enabled:YES' in runtime
 assert '[live setArray:result]' in runtime
 assert '[controller setSpecifiers:' not in runtime
-assert 'reloadData' not in runtime
+assert 'reloadData' not in runtime and 'reloadData' not in category
+assert 'setSpecifiers:' not in category
+assert runtime.index('haoge_settingsshelf_captureRows(controller, rows);') < runtime.index('if (haoge_settingsshelf_busy) return rows;')
+assert 'HAOGE_SETTINGSSHELF_SNAPSHOT_CHANGED_NOTIFICATION' in runtime and 'HAOGE_SETTINGSSHELF_SNAPSHOT_CHANGED_NOTIFICATION' in category
+assert 'if (!_haoge_settingsshelf_visible) return;' in category
+assert 'haoge_settingsshelf_sameRows(_haoge_settingsshelf_renderedItems, items)' in category
 assert 'haoge_settingsshelf_isRoot(controller)' in runtime
 assert 'removeContiguousSpecifiers:run animated:NO' in runtime
 assert 'insertContiguousSpecifiers:navigation atIndex:insertionIndex animated:NO' in runtime
