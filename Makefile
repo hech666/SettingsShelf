@@ -10,7 +10,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = HaogeSettingsShelf
 HaogeSettingsShelf_FILES = $(wildcard Hooks/*.xm Sources/*.m)
 HaogeSettingsShelf_CFLAGS = -fobjc-arc -I./Headers -I./Sources
-HaogeSettingsShelf_FRAMEWORKS = UIKit Foundation CoreFoundation
+HaogeSettingsShelf_FRAMEWORKS = UIKit Foundation CoreFoundation ImageIO
 HaogeSettingsShelf_PRIVATE_FRAMEWORKS = Preferences
 HaogeSettingsShelf_LIBRARIES = substrate
 

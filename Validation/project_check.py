@@ -16,14 +16,24 @@ assert 'HaogeSettingsShelfCategoryListController' in runtime
 assert 'haoge_settingsshelf_snapshot' in category and 'dlsym' in category
 assert 'AppBundleID' in (root/'Sources/HaogeSettingsShelfGrouping.m').read_text()
 assert not (root/'Sources/HaogeSettingsShelfConfig.m').exists()
-assert 'PSSwitchCell' not in (root/'HaogeSettingsShelfPrefs/HaogeSettingsShelfRootListController.m').read_text()
+prefs='\n'.join(p.read_text() for p in (root/'HaogeSettingsShelfPrefs').glob('*.m'))
+for label in ('屏蔽部件与维修记录','屏蔽系统更新提示','自定义名称与图标'):
+    assert label in prefs, label
+for key in ('suppressBatteryServiceWarnings','suppressSoftwareUpdatePrompt'):
+    assert key in prefs, key
+assert '@"enabled"' not in prefs
+assert 'haoge_settingsshelf_guardRootRows' in runtime
+assert 'haoge_settingsshelf_applyCustomization' in runtime
 assert 'enabled:YES' in runtime
 assert '[live setArray:result]' in runtime
 assert '[controller setSpecifiers:' not in runtime
 assert 'reloadData' not in runtime
 assert 'haoge_settingsshelf_isRoot(controller)' in runtime
 assert 'removeContiguousSpecifiers:run animated:NO' in runtime
-assert 'addSpecifiersFromArray:missingNavigation animated:NO' in runtime
+assert 'insertContiguousSpecifiers:navigation atIndex:0 animated:NO' in runtime
+assert 'haoge_settingsshelf_rootRemovalRanges' in runtime
+assert 'addSpecifiersFromArray:missingNavigation' not in runtime
+assert 'return [navigation arrayByAddingObjectsFromArray:kept]' in (root/'Sources/HaogeSettingsShelfGrouping.m').read_text()
 assert 'if ([controller isViewLoaded]) { haoge_settingsshelf_schedule(controller); return rows; }' in runtime
 assert '_insertContiguousSpecifiers:atIndex:animated:' in runtime
 # Preserve system insertion arguments, then reconcile through PSListController APIs.
@@ -43,4 +53,4 @@ for filename in ('HaogeSettingsShelfApps@2x.png','HaogeSettingsShelfTweaks@2x.pn
     assert struct.unpack_from('>II',data,16)==(60,60)
     assert filename in hook
 subprocess.run(['sh','-n',str(root/'build.sh')],check=True)
-print(json.dumps({'plists':'all valid','package':'com.haoge.settingsshelf','filter':['com.apple.Preferences'],'always_on':True,'legacy_switch_ignored':True,'grouping_model':'present','delayed_insertion_hook':'present','live_array_mutation':'present','shell_build_script':'syntax-ok','theos_link_or_package_build':False},indent=2))
+print(json.dumps({'plists':'all valid','package':'com.haoge.settingsshelf','filter':['com.apple.Preferences'],'always_on':True,'legacy_switch_ignored':True,'grouping_model':'present','delayed_insertion_hook':'present','navigation':'top','live_table_updates':'native remove/insert only','initial_array_transform':'before view loaded only','shell_build_script':'syntax-ok','theos_link_or_package_build':False},indent=2))

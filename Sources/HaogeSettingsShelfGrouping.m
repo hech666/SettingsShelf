@@ -41,6 +41,31 @@ static BOOL haoge_settingsshelf_sameEntry(id left, id right) {
     return a.length && [a isEqualToString:b];
 }
 
+NSArray<NSValue *> *haoge_settingsshelf_rootRemovalRanges(
+    NSArray *current, NSArray *desired, NSArray *navigation, BOOL *insertNavigation) {
+    BOOL navigationAtTop = navigation.count == 3 && current.count >= navigation.count;
+    for (NSUInteger i = 0; navigationAtTop && i < navigation.count; ++i) {
+        if (current[i] != navigation[i]) navigationAtTop = NO;
+    }
+    if (insertNavigation) *insertNavigation = !navigationAtTop;
+    NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+    NSInteger start = -1;
+    for (NSUInteger i = 0; i <= current.count; ++i) {
+        BOOL remove = NO;
+        if (i < current.count) {
+            id row = current[i];
+            remove = [desired indexOfObjectIdenticalTo:row] == NSNotFound ||
+                (haoge_settingsshelf_isNavigation(row) && (!navigationAtTop || i >= navigation.count));
+        }
+        if (remove && start < 0) start = (NSInteger)i;
+        if (!remove && start >= 0) {
+            [ranges addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)start, i - (NSUInteger)start)]];
+            start = -1;
+        }
+    }
+    return ranges;
+}
+
 @implementation HaogeSettingsShelfGroupingState
 - (instancetype)init {
     if ((self = [super init])) {
@@ -80,7 +105,6 @@ static BOOL haoge_settingsshelf_sameEntry(id left, id right) {
     }
     if (pendingGroup && !groupHadMoved) [kept addObject:pendingGroup];
     self.haoge_settingsshelf_tweaks = tweaks; self.haoge_settingsshelf_apps = apps;
-    [kept addObjectsFromArray:navigation];
-    return kept;
+    return [navigation arrayByAddingObjectsFromArray:kept];
 }
 @end

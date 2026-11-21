@@ -3,6 +3,11 @@
 #import <Preferences/PSSpecifier.h>
 #import <dlfcn.h>
 
+static void haoge_settingsshelf_rootApply(id specifier) {
+    void (*function)(id) = (void (*)(id))dlsym(RTLD_DEFAULT, "haoge_settingsshelf_applyCustomization");
+    if (function) function(specifier);
+}
+
 @implementation HaogeSettingsShelfRootListController
 - (NSMutableArray *)specifiers {
     if (!_specifiers) {
@@ -16,9 +21,15 @@
             : @"收纳主库尚未加载。请完全退出系统设置后重新打开；此插件不再需要开启开关。";
         [group setProperty:message forKey:@"footerText"]; [rows addObject:group];
         for (NSString *category in @[@"tweaks", @"apps"]) {
-            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:[category isEqualToString:@"apps"] ? @"应用软件" : @"越狱插件"
+            BOOL apps = [category isEqualToString:@"apps"];
+            NSString *fallback = apps ? @"应用软件" : @"越狱插件";
+            NSString *identifier = [@"com.haoge.settingsshelf.category." stringByAppendingString:category];
+            PSSpecifier *row = [PSSpecifier preferenceSpecifierNamed:fallback
                 target:nil set:nil get:nil detail:HaogeSettingsShelfCategoryListController.class cell:PSLinkCell edit:nil];
-            [row setProperty:category forKey:@"HaogeSettingsShelfCategory"]; [rows addObject:row];
+            row.identifier = identifier;
+            [row setProperty:category forKey:@"HaogeSettingsShelfCategory"];
+            haoge_settingsshelf_rootApply(row);
+            [rows addObject:row];
         }
         PSSpecifier *refresh = [PSSpecifier preferenceSpecifierNamed:@"重新整理设置首页" target:self
             set:nil get:nil detail:nil cell:PSButtonCell edit:nil];
@@ -29,9 +40,14 @@
 }
 - (void)haoge_settingsshelf_refresh {
     [[NSNotificationCenter defaultCenter] postNotificationName:@"com.haoge.settingsshelf.regroup" object:nil];
-    dispatch_async(dispatch_get_main_queue(), ^{ [self reloadSpecifiers]; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (PSSpecifier *row in _specifiers) if ([row.identifier hasPrefix:@"com.haoge.settingsshelf.category."]) haoge_settingsshelf_rootApply(row);
+        [self reloadSpecifiers];
+    });
 }
 - (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated]; [self reloadSpecifiers];
+    [super viewWillAppear:animated];
+    for (PSSpecifier *row in _specifiers) if ([row.identifier hasPrefix:@"com.haoge.settingsshelf.category."]) haoge_settingsshelf_rootApply(row);
+    [self reloadSpecifiers];
 }
 @end

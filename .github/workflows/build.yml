@@ -30,6 +30,14 @@ jobs:
         run: |
           xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation -ISources Sources/HaogeSettingsShelfGrouping.m Validation/GroupingTests.m -o "$RUNNER_TEMP/settingsshelf-grouping-tests"
           "$RUNNER_TEMP/settingsshelf-grouping-tests"
+      - name: Run top placement and continuous insertion regression tests
+        run: |
+          xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation -ISources Sources/HaogeSettingsShelfGrouping.m Validation/TopPlacementTests.m -o "$RUNNER_TEMP/settingsshelf-top-tests"
+          "$RUNNER_TEMP/settingsshelf-top-tests"
+      - name: Run guard toggle and ABI regression tests
+        run: |
+          xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -framework Foundation Validation/GuardTests.m -o "$RUNNER_TEMP/settingsshelf-guard-tests"
+          "$RUNNER_TEMP/settingsshelf-guard-tests"
       - name: Set package version
         id: version
         run: |

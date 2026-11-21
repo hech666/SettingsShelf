@@ -1,6 +1,9 @@
 #import "HaogeSettingsShelfRuntime.h"
 #import "HaogeSettingsShelfGrouping.h"
 #import "HaogeSettingsShelfPaths.h"
+#import "HaogeSettingsShelfGuards.h"
+#import "HaogeSettingsShelfCustomization.h"
+#import <CoreFoundation/CoreFoundation.h>
 #import <UIKit/UIKit.h>
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
@@ -29,7 +32,10 @@ static HaogeSettingsShelfGroupingState *haoge_settingsshelf_state(id root) {
     return state;
 }
 static NSArray *haoge_settingsshelf_navigationRows(void) {
-    if (haoge_settingsshelf_navigation.count == 3) return haoge_settingsshelf_navigation;
+    if (haoge_settingsshelf_navigation.count == 3) {
+        for (id row in haoge_settingsshelf_navigation) if ([row cellType] != 0) haoge_settingsshelf_applyCustomization(row);
+        return haoge_settingsshelf_navigation;
+    }
     Class detail = NSClassFromString(@"HaogeSettingsShelfCategoryListController");
     if (!detail) {
         NSString *path = haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle");
@@ -53,6 +59,7 @@ static NSArray *haoge_settingsshelf_navigationRows(void) {
         NSString *imagePath = [haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle") stringByAppendingPathComponent:file];
         UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
         if (image.CGImage) [row setProperty:[UIImage imageWithCGImage:image.CGImage scale:2 orientation:UIImageOrientationUp] forKey:@"iconImage"];
+        haoge_settingsshelf_applyCustomization(row);
         [rows addObject:row];
     }
     haoge_settingsshelf_navigation = [rows copy]; return haoge_settingsshelf_navigation;
@@ -63,17 +70,16 @@ NSDictionary *haoge_settingsshelf_snapshot(void) {
     PSListController *root = haoge_settingsshelf_root;
     HaogeSettingsShelfGroupingState *state = root ? haoge_settingsshelf_state(root) : nil;
     return @{@"loaded":@YES, @"root":root ? NSStringFromClass(root.class) : @"", @"hits":@(haoge_settingsshelf_hits),
-        @"tweaks":state.haoge_settingsshelf_tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[]};
+        @"tweaks":state.haoge_settingsshelf_tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[],
+        @"navigation":haoge_settingsshelf_navigation ?: @[]};
 }
 
-static BOOL haoge_settingsshelf_containsIdentical(NSArray *array, id object) {
-    for (id item in array) if (item == object) return YES;
-    return NO;
-}
-static BOOL haoge_settingsshelf_containsIdentifier(NSArray *array, NSString *identifier) {
-    if (!identifier.length) return NO;
-    for (id item in array) if ([[item identifier] isEqualToString:identifier]) return YES;
-    return NO;
+static NSArray *haoge_settingsshelf_prepareRows(PSListController *root, NSArray *current, NSArray *navigation) {
+    HaogeSettingsShelfGroupingState *state = haoge_settingsshelf_state(root);
+    NSArray *desired = [state haoge_settingsshelf_transform:current enabled:YES navigation:navigation];
+    for (id row in state.haoge_settingsshelf_tweaks) haoge_settingsshelf_applyCustomization(row);
+    for (id row in state.haoge_settingsshelf_apps) haoge_settingsshelf_applyCustomization(row);
+    return haoge_settingsshelf_guardRootRows(desired);
 }
 // Match TweaksHub's deferred root insertion flow: let the system transaction
 // finish, then remove each moved contiguous run through PSListController APIs.
@@ -85,22 +91,18 @@ static void haoge_settingsshelf_reconcile(PSListController *root) {
         if (![current isKindOfClass:NSArray.class]) return;
         NSArray *navigation = haoge_settingsshelf_navigationRows();
         if (navigation.count != 3) return;
-        NSArray *desired = [haoge_settingsshelf_state(root) haoge_settingsshelf_transform:current enabled:YES navigation:navigation];
-
-        NSMutableArray<NSValue *> *ranges = [NSMutableArray array]; NSInteger start = -1;
-        for (NSUInteger i = 0; i <= current.count; ++i) {
-            BOOL remove = i < current.count && !haoge_settingsshelf_containsIdentical(desired, current[i]);
-            if (remove && start < 0) start = (NSInteger)i;
-            if (!remove && start >= 0) { [ranges addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)start, i - (NSUInteger)start)]]; start = -1; }
-        }
+        // Fail closed on a host without the native insertion API. Do not
+        // remove rows unless the complete navigation can be inserted safely.
+        if (![root respondsToSelector:@selector(insertContiguousSpecifiers:atIndex:animated:)]) return;
+        NSArray *desired = haoge_settingsshelf_prepareRows(root, current, navigation);
+        BOOL insertNavigation = NO;
+        NSArray<NSValue *> *ranges = haoge_settingsshelf_rootRemovalRanges(current, desired, navigation, &insertNavigation);
         for (NSValue *value in ranges.reverseObjectEnumerator) {
             NSArray *run = [current subarrayWithRange:value.rangeValue];
             if (run.count) [root removeContiguousSpecifiers:run animated:NO];
         }
 
-        NSMutableArray *missingNavigation = [NSMutableArray array];
-        for (id row in navigation) if (!haoge_settingsshelf_containsIdentifier(current, [row identifier])) [missingNavigation addObject:row];
-        if (missingNavigation.count) [root addSpecifiersFromArray:missingNavigation animated:NO];
+        if (insertNavigation) [root insertContiguousSpecifiers:navigation atIndex:0 animated:NO];
         haoge_settingsshelf_root = root; ++haoge_settingsshelf_hits;
     } @finally { --haoge_settingsshelf_busy; }
 }
@@ -122,7 +124,7 @@ static id haoge_settingsshelf_specifiersHook(id controller, SEL selector) {
     // original specifiers hook does. Live tables are changed via PSListController APIs.
     if ([controller isViewLoaded]) { haoge_settingsshelf_schedule(controller); return rows; }
     NSArray *navigation = haoge_settingsshelf_navigationRows();
-    NSArray *result = [haoge_settingsshelf_state(controller) haoge_settingsshelf_transform:rows enabled:YES navigation:navigation];
+    NSArray *result = haoge_settingsshelf_prepareRows(controller, rows, navigation);
     NSMutableArray *live = [rows isKindOfClass:NSMutableArray.class] ? (NSMutableArray *)rows : [rows mutableCopy];
     if (![live isEqualToArray:result]) [live setArray:result];
     return live;
@@ -201,17 +203,44 @@ static void haoge_settingsshelf_installRootHooks(void) {
     NSLog(@"[SettingsShelf] root-only original-style hooks installed: %@", NSStringFromClass(cls));
 }
 
+static BOOL haoge_settingsshelf_refreshPending;
+static void haoge_settingsshelf_preferencesChanged(CFNotificationCenterRef center, void *observer,
+    CFStringRef name, const void *object, CFDictionaryRef info) {
+    (void)center; (void)observer; (void)name; (void)object; (void)info;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (haoge_settingsshelf_refreshPending) return;
+        haoge_settingsshelf_refreshPending = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            haoge_settingsshelf_refreshPending = NO;
+            haoge_settingsshelf_invalidateCustomization();
+            haoge_settingsshelf_installGuards();
+            PSListController *root = haoge_settingsshelf_root;
+            // Rebuild from the system source so disabling a guard restores
+            // its rows as well; never write into a live specifier array.
+            if (root && !haoge_settingsshelf_busy) [root reloadSpecifiers];
+            haoge_settingsshelf_schedule(root);
+        });
+    });
+}
+
 void haoge_settingsshelf_start(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+            haoge_settingsshelf_preferencesChanged, CFSTR("com.haoge.settingsshelf.preferences-changed"),
+            NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification object:nil queue:NSOperationQueue.mainQueue
-            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_installRootHooks(); }];
+            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_installGuards(); }];
         [[NSNotificationCenter defaultCenter] addObserverForName:@"com.haoge.settingsshelf.regroup" object:nil queue:NSOperationQueue.mainQueue
             usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_schedule(haoge_settingsshelf_root); }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue
-            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_schedule(haoge_settingsshelf_root); }];
+            usingBlock:^(__unused NSNotification *note) {
+                haoge_settingsshelf_invalidateCustomization();
+                haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_installGuards();
+                haoge_settingsshelf_schedule(haoge_settingsshelf_root);
+            }];
         for (NSUInteger i = 0; i < 16; ++i) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ haoge_settingsshelf_installRootHooks(); });
-        haoge_settingsshelf_installRootHooks();
-        NSLog(@"[SettingsShelf] original-style root-list flow active");
+        haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_installGuards();
+        NSLog(@"[SettingsShelf] root-list flow active; navigation at top");
     });
 }

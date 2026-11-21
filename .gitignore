@@ -7,3 +7,4 @@ obj/
 .debs/
 Validation/objects/
 Validation/native-*/
+Validation/_tmp/

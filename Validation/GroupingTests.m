@@ -34,7 +34,7 @@ int main(void) { @autoreleasepool {
     VERIFY(haoge_settingsshelf_entryCategory(app)==2);
     VERIFY(haoge_settingsshelf_entryCategory(nav1)==0);
     NSArray *output = [state haoge_settingsshelf_transform:raw enabled:YES navigation:nav];
-    VERIFY(([output isEqualToArray:@[systemGroup,wifi,navGroup,nav1,nav2]]));
+    VERIFY(([output isEqualToArray:@[navGroup,nav1,nav2,systemGroup,wifi]]));
     VERIFY(state.haoge_settingsshelf_tweaks.count==2);
     VERIFY(state.haoge_settingsshelf_apps.count==1);
     VERIFY(state.haoge_settingsshelf_tweaks[0]==tweak);
