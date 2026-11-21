@@ -65,7 +65,7 @@ def main():
         for feature in inventory_features:
             assert feature in main_bytes, ('missing original inventory feature',feature)
         assert b'haoge_settingsshelf_tweakInventoryForController' in prefs_bytes, 'category inventory bridge missing'
-        assert b'cellClass' not in main_bytes, 'unexpected vendor cellClass rewriting'
+        assert b'THCustomEntryCell' not in main_bytes, 'unexpected vendor cell subclass in package'
         assert b'HaogeSettingsShelfConfig' not in main_bytes, 'legacy enable gate present'
         assert b'root-list flow active; navigation between account and connectivity' in main_bytes, 'missing account-connectivity navigation runtime'
         assert b'HaogeSettingsShelfRootListController' not in prefs_bytes, 'standalone status page remains'
