@@ -1,0 +1,23 @@
+{
+  "project": "SettingsShelf",
+  "package_id": "com.haoge.settingsshelf",
+  "source_scope": "Preferences-only settings categorization",
+  "static_plists_valid": true,
+  "doctor_structure_and_namespaces": "pass; custom-filter review warning remains",
+  "build_script_syntax": "pass",
+  "local_compile": {
+    "compiler": "Clang 22.1.8",
+    "sdk": "iPhoneOS 16.5",
+    "deployment_target": "iOS 15.0",
+    "arm64_object_units": 4,
+    "arm64e_object_units": 4,
+    "warnings": 0,
+    "validation_only": true,
+    "source_revision": "before display-name and category-icon changes; not recompiled for this update",
+    "path_macros": "temporary identity macros; not valid for runtime packaging"
+  },
+  "theos_link": false,
+  "deb_built": false,
+  "device_installed_or_tested": false,
+  "github_ci_triggered": false
+}

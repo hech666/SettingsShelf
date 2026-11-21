@@ -1,0 +1,77 @@
+name: Build 越狱插件和应用软件
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: Package scheme
+        type: choice
+        options: [rootless, roothide]
+        default: roothide
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      THEOS: ${{ github.workspace }}/.theos-ci
+      THEOS_PACKAGE_SCHEME: ${{ github.event_name == 'workflow_dispatch' && inputs.scheme || 'roothide' }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate names, icons and project
+        run: python3 Validation/project_check.py
+      - name: Set package version
+        id: version
+        run: |
+          VERSION="5.2.0-${{ github.run_number }}"
+          sed -i '' "s/^Version: .*/Version: ${VERSION}/" control
+          echo "package_version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Install host tools
+        run: brew install dpkg ldid
+      - name: Fetch Theos and iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$THEOS_PACKAGE_SCHEME" == roothide ]]; then
+            git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/roothide/theos.git "$THEOS"
+          else
+            git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/theos/theos.git "$THEOS"
+          fi
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+          git -C "$RUNNER_TEMP/theos-sdks" sparse-checkout set iPhoneOS16.5.sdk
+          cp -a "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+      - name: Build package
+        run: sh build.sh "$THEOS_PACKAGE_SCHEME"
+      - name: Verify architecture, code signatures and icons
+        env:
+          EXPECTED_PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+        run: |
+          set -eu
+          DEB=$(find packages -name '*.deb' -type f | head -1)
+          test -n "$DEB"
+          python3 Validation/verify_package.py "$DEB" packages/PackageVerification.json
+          python3 Validation/ci_manifest.py packages/SourceManifest.json "$EXPECTED_PACKAGE_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SettingsShelf-${{ env.THEOS_PACKAGE_SCHEME }}-${{ github.run_number }}
+          path: |
+            packages/*.deb
+            packages/PackageVerification.json
+            packages/SourceManifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish verified package
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.package_version }}
+          name: 越狱插件和应用软件 v${{ steps.version.outputs.package_version }}
+          files: |
+            packages/*.deb
+            packages/PackageVerification.json
+            packages/SourceManifest.json

@@ -1,0 +1,40 @@
+[
+  {
+    "category": "应用软件",
+    "source_file": "应用软件.png",
+    "source_pixels": [
+      250,
+      250
+    ],
+    "source_bytes": 69385,
+    "source_sha256": "240e0ac064d0a63ea1bd368bb1c6f93f291bef4f3219829561d6188330ed5f13",
+    "resource_file": "HaogeSettingsShelfApps@2x.png",
+    "pixels": [
+      60,
+      60
+    ],
+    "mode": "RGBA",
+    "bytes": 4982,
+    "sha256": "795ffca706495f5dd0a2dcff5833a2f79c47239e8213d0b79c15664b61838c67",
+    "source_unchanged": true
+  },
+  {
+    "category": "越狱插件",
+    "source_file": "系统插件.png",
+    "source_pixels": [
+      250,
+      250
+    ],
+    "source_bytes": 46623,
+    "source_sha256": "45e3364bee2886aecb696643b38dc8719b0b8d5562d0e423d8071391492eb589",
+    "resource_file": "HaogeSettingsShelfTweaks@2x.png",
+    "pixels": [
+      60,
+      60
+    ],
+    "mode": "RGBA",
+    "bytes": 3926,
+    "sha256": "4bcd60facbfca3ef0507ac839cc98009b47e3f3237db6f3fd27ddbec3bfb8cca",
+    "source_unchanged": true
+  }
+]

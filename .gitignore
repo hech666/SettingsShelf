@@ -1,0 +1,9 @@
+.theos/
+.theos-ci/
+.build_stub/
+__pycache__/
+packages/
+obj/
+.debs/
+Validation/objects/
+Validation/native-*/

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "SettingsShelf",
+  "id": "settingsshelf",
+  "display_name": "越狱插件和应用软件",
+  "class_prefix": "HaogeSettingsShelf",
+  "symbol_prefix": "haoge_settingsshelf",
+  "package": "com.haoge.settingsshelf",
+  "bundle": "com.apple.Preferences",
+  "sdk_version": "16.5",
+  "minimum_ios": "15.0",
+  "preferences": true,
+  "slider": false,
+  "github_actions": true
+}

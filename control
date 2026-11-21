@@ -1,0 +1,13 @@
+Package: com.haoge.settingsshelf
+Name: 越狱插件和应用软件
+Version: 5.2.0
+Architecture: iphoneos-arm
+Description: 将 iOS 设置中的越狱插件与应用软件设置归类浏览
+Maintainer: haoge
+Author: haoge
+Section: Haoge-Tweaks
+Depends: mobilesubstrate, preferenceloader
+Conflicts: com.axs.tweakshub, com.nightwind.onesettings,
+ com.creaturecoding.shuffle, com.sop.settingsrevamp,
+ com.hk.settingsrevamp, com.dao.settingsrevamp,
+ byg.iosios.net.settingsrevamp
