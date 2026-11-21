@@ -57,6 +57,15 @@ def main():
         assert filtr=={'Filter':{'Bundles':['com.apple.Preferences']}}
         resources=prefs[0].parent;icons={}
         main_bytes=mains[0].read_bytes();prefs_bytes=prefs[0].read_bytes()
+        # Confirm the shipped dylib contains the recovered inventory bridge, not just root snapshots.
+        inventory_features=(b'haoge_settingsshelf_tweakInventoryForController',
+            b'haoge_settingsshelf_inventoryDescriptors', b'haoge_settingsshelf_inventoryBuildRows',
+            b'haoge_settingsshelf_inventoryRowsForOwner', b'SpecifiersFromPlist',
+            b'/Library/PreferenceLoader/Preferences', b'CoreFoundationVersion')
+        for feature in inventory_features:
+            assert feature in main_bytes, ('missing original inventory feature',feature)
+        assert b'haoge_settingsshelf_tweakInventoryForController' in prefs_bytes, 'category inventory bridge missing'
+        assert b'cellClass' not in main_bytes, 'unexpected vendor cellClass rewriting'
         assert b'HaogeSettingsShelfConfig' not in main_bytes, 'legacy enable gate present'
         assert b'root-list flow active; navigation between account and connectivity' in main_bytes, 'missing account-connectivity navigation runtime'
         assert b'HaogeSettingsShelfRootListController' not in prefs_bytes, 'standalone status page remains'
@@ -74,7 +83,8 @@ def main():
             icons[name]={'pixels':[60,60],'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}
         report={'package':deb.name,'version':version,'sha256':hashlib.sha256(deb.read_bytes()).hexdigest(),
                 'bytes':deb.stat().st_size,'main':verify_macho(mains[0]),'prefs':verify_macho(prefs[0]),
-                'icons':icons,'filter':filtr,'device_tested':False}
+                'icons':icons,'filter':filtr,'inventory':'PreferenceLoader + native SpecifiersFromPlist',
+                'inventory_owner_fallback':'same live controller only','device_tested':False}
         target.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps(report,ensure_ascii=False,indent=2))
 if __name__=='__main__':main()

@@ -31,6 +31,15 @@ static void haoge_settingsshelf_categoryNotify(void) {
     id value = provider ? provider() : nil;
     return [value isKindOfClass:NSDictionary.class] ? value : @{};
 }
+- (NSArray *)haoge_settingsshelf_categoryItems {
+    if ([[self haoge_settingsshelf_categoryKey] isEqualToString:@"apps"])
+        return [self haoge_settingsshelf_snapshot][@"apps"] ?: @[];
+    NSArray *(*provider)(PSListController *) = (NSArray *(*)(PSListController *))dlsym(
+        RTLD_DEFAULT, "haoge_settingsshelf_tweakInventoryForController");
+    id rows = provider ? provider(self) : nil;
+    // Plugin inventory is generated independently from partial root observations.
+    return [rows isKindOfClass:NSArray.class] ? rows : @[];
+}
 - (void)haoge_settingsshelf_setSwitch:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"HaogeSettingsShelfPreferenceKey"];
     BOOL requested = [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : NO;
@@ -61,7 +70,7 @@ static void haoge_settingsshelf_categoryNotify(void) {
         NSString *heading = apps ? @"应用软件" : haoge_settingsshelf_categoryDisplayName(@"com.haoge.settingsshelf.category.tweaks", @"越狱插件");
         self.title = heading;
         NSMutableArray *rows = [NSMutableArray arrayWithObject:[PSSpecifier groupSpecifierWithName:heading]];
-        NSArray *items = [self haoge_settingsshelf_snapshot][category] ?: @[];
+        NSArray *items = [self haoge_settingsshelf_categoryItems];
         _haoge_settingsshelf_renderedItems = items;
         for (id entry in items) {
             if (![entry isKindOfClass:PSSpecifier.class]) continue;
@@ -99,7 +108,7 @@ static void haoge_settingsshelf_categoryNotify(void) {
 }
 - (void)haoge_settingsshelf_snapshotChanged:(__unused NSNotification *)notification {
     if (!_haoge_settingsshelf_visible) return;
-    NSArray *items = [self haoge_settingsshelf_snapshot][[self haoge_settingsshelf_categoryKey]];
+    NSArray *items = [self haoge_settingsshelf_categoryItems];
     if (!haoge_settingsshelf_sameRows(_haoge_settingsshelf_renderedItems, items)) [self haoge_settingsshelf_reloadCategory];
 }
 - (void)viewWillAppear:(BOOL)animated {

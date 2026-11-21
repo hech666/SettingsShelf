@@ -10,9 +10,10 @@
 ## 真正收纳与修复
 
 - 将识别出的越狱插件设置、第三方应用设置从首页移入两个分类，系统设置仍在原位。
-- 保留原始 PSSpecifier、target、图标、lazy-bundle 和跳转信息，不扫盘，不拼造或跨会话持久化第三方设置链接。
-- 同一个设置根控制器内，即使系统短暂返回不含分类导航的部分列表，也只合并实际观察到的第三方行；系统行只取当前快照。各分类按首次观察顺序列出，同分类同 identifier 使用最新原对象；无 identifier 时用宿主提供的 bundle 路径或应用 ID。
-- 分类页打开后会在主线程合并刷新，既处理迟到的新项目，也处理同 ID 的新对象。未出现过的项目不会凭空补齐。宿主的部分列表不能作为卸载证明；卸载或改 ID／来源后须结束并重新打开「设置」清理旧会话。
+- 越狱插件列表移植原 TweaksHub 的 PreferenceLoader 流程：递归枚举 `/Library/PreferenceLoader/Preferences` 的 plist，检查外层 `filter`／`pl_filter` 与 entry 的 `pl_filter` CoreFoundation 版本范围，优先有效 `bundlePath`，否则查找越狱与系统 PreferenceBundles；只剔除插件自身。
+- 将原始 entry 交给系统 Preferences 的真实 `SpecifiersFromPlist`，使用已核实的九参数 ABI：`input(items:[entry]), nil, 当前分类控制器, filename, NSBundle, nil, nil, 当前分类控制器, NSMutableArray *__strong *`。不改写第三方 target class／cellClass，保留 lazy-bundle，缺失 identifier 按原 label／文件名回退，缺失 name 使用文件名，最终按名称本地化不区分大小写排序并去重。
+- 越狱插件分类不再依赖首页偶尔返回的部分列表；冷启动即可独立生成完整可发现的插件清单。完整扫描后允许新增、卸载与过滤变化更新；枚举或生成失败时不提交半成品。旧行只能回退给生成它的同一有效弱控制器，跨控制器失败返回空列表，避免已销毁 target；不持有控制器，不引入循环引用。
+- 应用软件仍沿用原始首页 PSSpecifier、target、图标及跳转信息。同一个根控制器内合并实际观察到的第三方应用行，系统行只取当前快照；应用列表的部分返回不作为卸载证明。分类页通过主线程通知合并刷新，同 ID 的新对象仍会更新。
 - 仅 Hook 设置根控制器；初始化列表时才修改数组，已加载页面通过 Preferences 原生连续移除／插入 API 更新，不对活表调用 `setSpecifiers:` 或 `reloadData`。
 - 分类导航组固定放在 Apple ID／头像账户组下方、飞行模式／Wi-Fi 网络组上方；完整移动三项导航，兼容系统延迟插入及重复整理。
 - 不提供插件自身的独立设置项；两个分类入口及“越狱插件”内的附加功能保持可用。
@@ -33,7 +34,7 @@
 
 公共仓库：`hech666/SettingsShelf`。工作流在推送 main 或手动触发时执行：
 
-1. 校验名称、plist、两个 PNG 的 60×60 尺寸及源码引用。
+1. 校验名称、plist、两个 PNG 的 60×60 尺寸、源码引用、原版库存生成 ABI 与同所有者失败回退；执行 Foundation 库存测试（含冷启动、重复打开、过滤、损坏 plist、生成失败、弱控制器销毁），保留全部分组、顶部插入、附加功能及自定义范围回归。
 2. 使用 macOS 15、Xcode、Theos 与 iPhoneOS 16.5 SDK 构建；默认 scheme 为 Roothide。
 3. 包版本使用 `5.2.0-${{ github.run_number }}`。
 4. 主插件和 PreferenceBundle 均仅编译 **arm64e 单架构**；验包拒绝 arm64 和 FAT 通用二进制，并验证签名代码页、过滤器与包内图标，生成源文件哈希清单。

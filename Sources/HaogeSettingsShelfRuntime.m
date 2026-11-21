@@ -1,6 +1,7 @@
 #import "HaogeSettingsShelfRuntime.h"
 #import "HaogeSettingsShelfGrouping.h"
 #import "HaogeSettingsShelfSnapshot.h"
+#import "HaogeSettingsShelfInventory.h"
 #import "HaogeSettingsShelfPaths.h"
 #import "HaogeSettingsShelfGuards.h"
 #import "HaogeSettingsShelfCustomization.h"
@@ -10,11 +11,21 @@
 #import <Preferences/PSSpecifier.h>
 #import <substrate.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 
 static char HaogeSettingsShelfStateKey;
 static __weak PSListController *haoge_settingsshelf_root;
+static __weak PSListController *haoge_settingsshelf_inventoryController;
 static Class haoge_settingsshelf_rootClass;
 static NSArray *haoge_settingsshelf_navigation;
+static NSArray<NSDictionary *> *haoge_settingsshelf_inventoryDescriptorsCache;
+static NSArray *haoge_settingsshelf_inventoryRows;
+static NSArray *haoge_settingsshelf_inventoryRowsDescriptors;
+// Keep Preferences' updated auxiliary array alive with its published rows.
+static NSMutableArray *haoge_settingsshelf_inventoryRetainedObjects;
+static BOOL haoge_settingsshelf_hasPublishedTweakInventory;
+static BOOL haoge_settingsshelf_inventoryNeedsRefresh = YES;
+static CFAbsoluteTime haoge_settingsshelf_inventoryLastAttempt;
 static NSUInteger haoge_settingsshelf_hits;
 static __thread NSUInteger haoge_settingsshelf_busy;
 static __thread BOOL haoge_settingsshelf_reconciling;
@@ -23,6 +34,8 @@ static __weak PSListController *haoge_settingsshelf_pendingRoot;
 static BOOL haoge_settingsshelf_snapshotPending;
 static NSMutableSet *haoge_settingsshelf_installed;
 static IMP haoge_settingsshelf_originalSpecifiers;
+
+static void haoge_settingsshelf_scheduleSnapshot(void);
 
 static BOOL haoge_settingsshelf_isRoot(id value) {
     return value && haoge_settingsshelf_rootClass && [value isKindOfClass:haoge_settingsshelf_rootClass];
@@ -35,6 +48,104 @@ static HaogeSettingsShelfGroupingState *haoge_settingsshelf_state(id root) {
     }
     return state;
 }
+static BOOL haoge_settingsshelf_refreshInventoryDescriptors(void) {
+    if (![NSThread isMainThread]) return NO;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (!haoge_settingsshelf_inventoryNeedsRefresh && now - haoge_settingsshelf_inventoryLastAttempt < 1.0)
+        return haoge_settingsshelf_inventoryDescriptorsCache != nil;
+    haoge_settingsshelf_inventoryLastAttempt = now;
+    NSString *preferences = haoge_settingsshelf_resourcePath(@"/Library/PreferenceLoader/Preferences");
+    NSString *bundles = haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles");
+    NSString *system = haoge_settingsshelf_resourcePath(@"/System/Library/PreferenceBundles");
+    BOOL complete = NO;
+    NSArray *candidate = haoge_settingsshelf_inventoryDescriptors(preferences, bundles, system, &complete);
+    if (!complete || ![candidate isKindOfClass:NSArray.class]) {
+        haoge_settingsshelf_inventoryNeedsRefresh = YES;
+        NSLog(@"[SettingsShelf] PreferenceLoader inventory incomplete; retaining last-known-good list");
+        return haoge_settingsshelf_inventoryDescriptorsCache != nil;
+    }
+    haoge_settingsshelf_inventoryDescriptorsCache = [candidate copy];
+    haoge_settingsshelf_inventoryNeedsRefresh = NO;
+    return YES;
+}
+
+static NSArray *haoge_settingsshelf_generateInventoryRows(NSArray *descriptors,
+    PSListController *controller, NSMutableArray *__strong *retainedObjects, BOOL *complete) {
+    static void *preferencesHandle;
+    if (!preferencesHandle)
+        preferencesHandle = dlopen("/System/Library/PrivateFrameworks/Preferences.framework/Preferences", RTLD_LAZY);
+    typedef NSArray *(*SpecifiersFromPlist)(NSDictionary *, id, id, NSString *, NSBundle *, id, id, id,
+        NSMutableArray *__strong *);
+    SpecifiersFromPlist generate = preferencesHandle ?
+        (SpecifiersFromPlist)dlsym(preferencesHandle, "SpecifiersFromPlist") : NULL;
+    if (!generate) { if (complete) *complete = NO; return nil; }
+    __block NSMutableArray *__strong retained = retainedObjects ? *retainedObjects : nil;
+    if (!retained) retained = [NSMutableArray array];
+    NSArray *rows = haoge_settingsshelf_inventoryBuildRows(descriptors,
+        ^NSArray *(NSDictionary *descriptor, BOOL *success) {
+            NSDictionary *entry = descriptor[@"entry"];
+            NSString *filename = descriptor[@"title"];
+            NSBundle *bundle = [NSBundle bundleWithPath:descriptor[@"bundlePath"]];
+            if (![entry isKindOfClass:NSDictionary.class] || !bundle || !filename.length) {
+                if (success) *success = NO;
+                return nil;
+            }
+            NSMutableDictionary *item = [entry mutableCopy];
+            NSDictionary *input = @{@"items":@[item]};
+            NSArray *generated = nil;
+            @try {
+                // Recovered ABI: x0..x7 plus strong out-array at stack argument 9.
+                generated = generate(input, nil, controller, filename, bundle, nil, nil, controller, &retained);
+            } @catch (NSException *exception) {
+                NSLog(@"[SettingsShelf] SpecifiersFromPlist failed for %@: %@", filename, exception);
+                if (success) *success = NO;
+                return nil;
+            }
+            if (![generated isKindOfClass:NSArray.class]) {
+                if (success) *success = NO;
+                return nil;
+            }
+            for (id value in generated) {
+                if (![value isKindOfClass:PSSpecifier.class]) continue;
+                PSSpecifier *specifier = value;
+                [specifier setProperty:descriptor[@"bundlePath"] forKey:PSLazilyLoadedBundleKey];
+                if (!specifier.identifier.length) specifier.identifier = descriptor[@"identifier"] ?: filename;
+                if (!specifier.name.length) specifier.name = filename;
+            }
+            if (success) *success = YES;
+            return generated;
+        }, complete);
+    if (retainedObjects) *retainedObjects = retained;
+    return rows;
+}
+
+// Exported C bridge: the native Preferences generator receives the real page controller.
+NSArray *haoge_settingsshelf_tweakInventoryForController(PSListController *controller) {
+    if (![NSThread isMainThread] || !controller) return @[];
+    (void)haoge_settingsshelf_refreshInventoryDescriptors();
+    // Never reuse native rows with another (possibly destroyed) target controller.
+    NSArray *fallback = haoge_settingsshelf_inventoryRowsForOwner(
+        haoge_settingsshelf_inventoryRows, haoge_settingsshelf_inventoryController, controller);
+    if (haoge_settingsshelf_inventoryController == controller && haoge_settingsshelf_inventoryRows &&
+        [haoge_settingsshelf_inventoryRowsDescriptors isEqualToArray:haoge_settingsshelf_inventoryDescriptorsCache])
+        return fallback;
+    if (!haoge_settingsshelf_inventoryDescriptorsCache) return fallback;
+    NSMutableArray *__strong retained = [NSMutableArray array];
+    BOOL complete = NO;
+    NSArray *candidate = haoge_settingsshelf_generateInventoryRows(
+        haoge_settingsshelf_inventoryDescriptorsCache, controller, &retained, &complete);
+    if (!complete || ![candidate isKindOfClass:NSArray.class]) return fallback;
+    BOOL changed = !haoge_settingsshelf_hasPublishedTweakInventory ||
+        !haoge_settingsshelf_sameRows(haoge_settingsshelf_inventoryRows, candidate);
+    (void)haoge_settingsshelf_inventoryCommitRows(&haoge_settingsshelf_inventoryRows, candidate, complete);
+    haoge_settingsshelf_inventoryRetainedObjects = retained;
+    haoge_settingsshelf_inventoryRowsDescriptors = haoge_settingsshelf_inventoryDescriptorsCache;
+    haoge_settingsshelf_inventoryController = controller;
+    haoge_settingsshelf_hasPublishedTweakInventory = YES;
+    if (changed) haoge_settingsshelf_scheduleSnapshot();
+    return haoge_settingsshelf_inventoryRows;
+}
+
 static NSArray *haoge_settingsshelf_navigationRows(void) {
     if (haoge_settingsshelf_navigation.count == 3) {
         for (PSSpecifier *row in haoge_settingsshelf_navigation)
@@ -74,8 +185,12 @@ NSDictionary *haoge_settingsshelf_snapshot(void) {
     if (![NSThread isMainThread]) return @{};
     PSListController *root = haoge_settingsshelf_root;
     HaogeSettingsShelfGroupingState *state = root ? haoge_settingsshelf_state(root) : nil;
+    NSArray *tweaks = haoge_settingsshelf_hasPublishedTweakInventory ?
+        haoge_settingsshelf_inventoryRowsForOwner(haoge_settingsshelf_inventoryRows,
+            haoge_settingsshelf_inventoryController, haoge_settingsshelf_inventoryController) :
+        (state.haoge_settingsshelf_tweaks ?: @[]);
     return @{@"loaded":@YES, @"root":root ? NSStringFromClass(root.class) : @"", @"hits":@(haoge_settingsshelf_hits),
-        @"tweaks":state.haoge_settingsshelf_tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[],
+        @"tweaks":tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[],
         @"navigation":haoge_settingsshelf_navigation ?: @[]};
 }
 
@@ -182,6 +297,23 @@ static void haoge_settingsshelf_installBoolHook(Class cls, NSString *name) {
     MSHookMessageEx(cls, selector, replacement, &original);
     if (original) [haoge_settingsshelf_installed addObject:installedKey];
 }
+static void haoge_settingsshelf_installRefreshHook(Class cls) {
+    SEL selector = NSSelectorFromString(@"refresh3rdPartyBundles");
+    NSString *installedKey = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", NSStringFromSelector(selector)];
+    if ([haoge_settingsshelf_installed containsObject:installedKey] || ![cls instancesRespondToSelector:selector]) return;
+    __block IMP original = NULL;
+    IMP replacement = imp_implementationWithBlock(^(id controller) {
+        ++haoge_settingsshelf_busy;
+        @try { ((void (*)(id, SEL))original)(controller, selector); }
+        @finally { --haoge_settingsshelf_busy; }
+        haoge_settingsshelf_inventoryNeedsRefresh = YES;
+        haoge_settingsshelf_inventoryLastAttempt = 0;
+        haoge_settingsshelf_scheduleSnapshot();
+        haoge_settingsshelf_schedule(controller);
+    });
+    MSHookMessageEx(cls, selector, replacement, &original);
+    if (original) [haoge_settingsshelf_installed addObject:installedKey];
+}
 static void haoge_settingsshelf_installRootHooks(void) {
     if (!haoge_settingsshelf_rootClass) {
         for (NSString *name in @[@"PSUIPrefsListController", @"PrefsListController", @"PSGGeneralController"]) {
@@ -215,6 +347,7 @@ static void haoge_settingsshelf_installRootHooks(void) {
         if (original) [haoge_settingsshelf_installed addObject:insertKey];
     }
     haoge_settingsshelf_installBoolHook(cls, @"insertMovedThirdPartySpecifiersAnimated:");
+    haoge_settingsshelf_installRefreshHook(cls);
     haoge_settingsshelf_installBoolHook(cls, @"viewWillAppear:");
     haoge_settingsshelf_installBoolHook(cls, @"viewDidAppear:");
 

@@ -74,5 +74,32 @@ assert not any(line.strip().startswith('ARCHS') for line in (root/'Makefile').re
 assert not any(line.strip().startswith('ARCHS') for line in (root/'HaogeSettingsShelfPrefs/Makefile').read_text().splitlines())
 assert 'include HaogeSettingsShelfBuild.mk' in (root/'Makefile').read_text()
 assert 'include ../HaogeSettingsShelfBuild.mk' in (root/'HaogeSettingsShelfPrefs/Makefile').read_text()
+# PreferenceLoader inventory is independent of root partial-list observations.
+inventory=(root/'Sources/HaogeSettingsShelfInventory.m').read_text()
+assert 'haoge_settingsshelf_tweakInventoryForController' in runtime and 'haoge_settingsshelf_tweakInventoryForController' in category
+assert '[self haoge_settingsshelf_categoryItems]' in category
+assert '/Library/PreferenceLoader/Preferences' in runtime
+assert '/Library/PreferenceBundles' in runtime and '/System/Library/PreferenceBundles' in runtime
+assert 'enumeratorAtURL:rootURL' in inventory
+assert 'CoreFoundationVersion' in inventory and 'current < upper' in inventory
+assert 'source[@"filter"] ?: source[@"pl_filter"]' in inventory
+assert 'entry[@"pl_filter"]' in inventory
+assert 'HaogeSettingsShelfPrefs.bundle' in inventory
+assert 'localizedCaseInsensitiveCompare' in inventory
+assert 'SpecifiersFromPlist' in runtime and 'NSMutableArray *__strong *' in runtime
+assert 'generate(input, nil, controller, filename, bundle, nil, nil, controller, &retained)' in runtime
+assert '@{@"items":@[item]}' in runtime
+assert 'forKey:PSLazilyLoadedBundleKey' in runtime
+assert '[item removeObjectForKey:' not in runtime and '[item setObject:' not in runtime
+assert 'haoge_settingsshelf_inventoryRowsForOwner' in runtime
+assert 'owner && owner == requester' in inventory
+assert 'if (![NSThread isMainThread] || !controller) return @[];' in runtime
+assert 'return haoge_settingsshelf_inventoryRows ?: @[]' not in runtime
+assert 'haoge_settingsshelf_inventoryRowsDescriptors isEqualToArray:' in runtime
+assert 'haoge_settingsshelf_inventoryController = nil' not in runtime
+assert 'HaogeSettingsShelfInventoryRetainedKey' not in runtime
+workflow=(root/'.github/workflows/build.yml').read_text()
+for regression in ('InventoryTests.m','GroupingTests.m','TopPlacementTests.m','GuardTests.m','AccountPlacementTests.m','CustomizationScopeTests.m'):
+    assert regression in workflow, regression
 subprocess.run(['sh','-n',str(root/'build.sh')],check=True)
 print(json.dumps({'plists':'all valid','package':'com.haoge.settingsshelf','filter':['com.apple.Preferences'],'always_on':True,'legacy_switch_ignored':True,'grouping_model':'present','delayed_insertion_hook':'present','navigation':'between account and connectivity','live_table_updates':'native remove/insert only','initial_array_transform':'before view loaded only','shell_build_script':'syntax-ok','theos_link_or_package_build':False},indent=2))
