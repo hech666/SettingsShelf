@@ -141,6 +141,7 @@ static NSString *haoge_settingsshelf_observationKey(id<HaogeSettingsShelfEntry> 
     NSMutableOrderedSet<NSString *> *_haoge_settingsshelf_appKeys;
     NSMutableDictionary<NSString *, id> *_haoge_settingsshelf_tweakRows;
     NSMutableDictionary<NSString *, id> *_haoge_settingsshelf_appRows;
+    NSMapTable *_haoge_settingsshelf_systemGroups;
 }
 - (instancetype)init {
     if ((self = [super init])) {
@@ -184,23 +185,37 @@ static NSString *haoge_settingsshelf_observationKey(id<HaogeSettingsShelfEntry> 
     [self haoge_settingsshelf_capture:input];
     if (!enabled || navigation.count != 3) return input;
     NSMutableArray *kept = [NSMutableArray array];
-    id pendingGroup = nil;
-    BOOL groupHadMoved = NO;
+    NSMapTable *groups = [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality
+                                              valueOptions:NSPointerFunctionsWeakMemory];
+    id pendingGroup = nil, lastKeptGroup = nil;
+    BOOL groupHadMoved = NO, hasNavigation = NO;
+    for (id entry in input) if (haoge_settingsshelf_isNavigation(entry)) { hasNavigation = YES; break; }
     // System rows and their order are drawn only from the current host list.
-    // Suppress a group only if its current rows all moved out of the root.
     for (id entry in input) {
         if (haoge_settingsshelf_isNavigation(entry)) continue;
         if (haoge_settingsshelf_isGroup(entry)) {
-            if (pendingGroup && !groupHadMoved) [kept addObject:pendingGroup];
+            if (pendingGroup && !groupHadMoved) { [kept addObject:pendingGroup]; lastKeptGroup = pendingGroup; }
             pendingGroup = entry; groupHadMoved = NO;
         } else if (haoge_settingsshelf_isSelfEntry(entry) || haoge_settingsshelf_entryCategory(entry)) {
             groupHadMoved = YES;
         } else {
-            if (pendingGroup) { [kept addObject:pendingGroup]; pendingGroup = nil; }
+            if (pendingGroup) {
+                // A late insert can split an existing system section. When
+                // its first system row still belongs to the preceding group,
+                // don't retain the injected third-party-only header.
+                if (!(hasNavigation && groupHadMoved && lastKeptGroup &&
+                      [_haoge_settingsshelf_systemGroups objectForKey:entry] == lastKeptGroup)) {
+                    [kept addObject:pendingGroup];
+                    lastKeptGroup = pendingGroup;
+                }
+                pendingGroup = nil;
+            }
+            if (lastKeptGroup) [groups setObject:lastKeptGroup forKey:entry];
             [kept addObject:entry];
         }
     }
     if (pendingGroup && !groupHadMoved) [kept addObject:pendingGroup];
+    _haoge_settingsshelf_systemGroups = groups;
     NSMutableArray *result = [kept mutableCopy];
     NSUInteger index = haoge_settingsshelf_navigationInsertionIndex(kept);
     [result insertObjects:navigation atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(index, navigation.count)]];
