@@ -6,16 +6,20 @@
 #import <Preferences/PSSpecifier.h>
 #import <substrate.h>
 #import <objc/runtime.h>
-#import <objc/message.h>
 
 static char HaogeSettingsShelfStateKey;
-static __weak PSListController *haoge_settingsshelf_lastRoot;
-static NSHashTable *haoge_settingsshelf_roots;
-static NSMutableSet *haoge_settingsshelf_installed;
+static __weak PSListController *haoge_settingsshelf_root;
+static Class haoge_settingsshelf_rootClass;
 static NSArray *haoge_settingsshelf_navigation;
 static NSUInteger haoge_settingsshelf_hits;
 static __thread NSUInteger haoge_settingsshelf_busy;
+static BOOL haoge_settingsshelf_reconcilePending;
+static NSMutableSet *haoge_settingsshelf_installed;
+static IMP haoge_settingsshelf_originalSpecifiers;
 
+static BOOL haoge_settingsshelf_isRoot(id value) {
+    return value && haoge_settingsshelf_rootClass && [value isKindOfClass:haoge_settingsshelf_rootClass];
+}
 static HaogeSettingsShelfGroupingState *haoge_settingsshelf_state(id root) {
     HaogeSettingsShelfGroupingState *state = objc_getAssociatedObject(root, &HaogeSettingsShelfStateKey);
     if (!state) {
@@ -24,31 +28,18 @@ static HaogeSettingsShelfGroupingState *haoge_settingsshelf_state(id root) {
     }
     return state;
 }
-static BOOL haoge_settingsshelf_isRoot(id controller, NSArray *rows) {
-    if (objc_getAssociatedObject(controller, &HaogeSettingsShelfStateKey)) return YES;
-    NSString *name = NSStringFromClass([controller class]);
-    if ([name containsString:@"PrefsListController"] || [name isEqualToString:@"PreferencesRootController"]) return YES;
-    for (id row in rows) {
-        if (![row isKindOfClass:PSSpecifier.class]) continue;
-        NSString *identifier = [row identifier];
-        if ([identifier isEqualToString:@"WIRELESS_GROUP"] || [identifier isEqualToString:@"THIRD_PARTY_GROUP"] ||
-            [identifier isEqualToString:@"com.haoge.settingsshelf.category.group"]) return YES;
-    }
-    return NO;
-}
 static NSArray *haoge_settingsshelf_navigationRows(void) {
     if (haoge_settingsshelf_navigation.count == 3) return haoge_settingsshelf_navigation;
     Class detail = NSClassFromString(@"HaogeSettingsShelfCategoryListController");
     if (!detail) {
         NSString *path = haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle");
-        NSBundle *bundle = [NSBundle bundleWithPath:path];
-        NSError *error = nil;
+        NSBundle *bundle = [NSBundle bundleWithPath:path]; NSError *error = nil;
         if (![bundle isLoaded] && ![bundle loadAndReturnError:&error]) {
             NSLog(@"[SettingsShelf] preference bundle unavailable: %@", error.localizedDescription); return @[];
         }
         detail = NSClassFromString(@"HaogeSettingsShelfCategoryListController");
     }
-    if (!detail) return @[]; // Never hide real rows without a usable destination.
+    if (!detail) return @[];
     NSMutableArray *rows = [NSMutableArray array];
     PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"越狱插件和应用软件"];
     group.identifier = @"com.haoge.settingsshelf.category.group"; [rows addObject:group];
@@ -58,11 +49,9 @@ static NSArray *haoge_settingsshelf_navigationRows(void) {
             target:nil set:nil get:nil detail:detail cell:PSLinkCell edit:nil];
         row.identifier = [@"com.haoge.settingsshelf.category." stringByAppendingString:category];
         [row setProperty:category forKey:@"HaogeSettingsShelfCategory"];
-        // The destination is an already-loaded Class. Do not overwrite `detail`
-        // with an NSString or give the link a conflicting lazy-bundle value.
         NSString *file = apps ? @"HaogeSettingsShelfApps@2x.png" : @"HaogeSettingsShelfTweaks@2x.png";
-        UIImage *image = [UIImage imageWithContentsOfFile:[haoge_settingsshelf_resourcePath(
-            @"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle") stringByAppendingPathComponent:file]];
+        NSString *imagePath = [haoge_settingsshelf_resourcePath(@"/Library/PreferenceBundles/HaogeSettingsShelfPrefs.bundle") stringByAppendingPathComponent:file];
+        UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
         if (image.CGImage) [row setProperty:[UIImage imageWithCGImage:image.CGImage scale:2 orientation:UIImageOrientationUp] forKey:@"iconImage"];
         [rows addObject:row];
     }
@@ -71,135 +60,158 @@ static NSArray *haoge_settingsshelf_navigationRows(void) {
 
 NSDictionary *haoge_settingsshelf_snapshot(void) {
     if (![NSThread isMainThread]) return @{};
-    HaogeSettingsShelfGroupingState *state = haoge_settingsshelf_lastRoot ? haoge_settingsshelf_state(haoge_settingsshelf_lastRoot) : nil;
-    return @{@"loaded":@YES, @"root":haoge_settingsshelf_lastRoot ? NSStringFromClass(haoge_settingsshelf_lastRoot.class) : @"",
-        @"hits":@(haoge_settingsshelf_hits), @"tweaks":state.haoge_settingsshelf_tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[]};
+    PSListController *root = haoge_settingsshelf_root;
+    HaogeSettingsShelfGroupingState *state = root ? haoge_settingsshelf_state(root) : nil;
+    return @{@"loaded":@YES, @"root":root ? NSStringFromClass(root.class) : @"", @"hits":@(haoge_settingsshelf_hits),
+        @"tweaks":state.haoge_settingsshelf_tweaks ?: @[], @"apps":state.haoge_settingsshelf_apps ?: @[]};
 }
 
-static NSMutableArray *haoge_settingsshelf_transform(id root, NSArray *original) {
-    if (![NSThread isMainThread] || ![original isKindOfClass:NSArray.class] || !haoge_settingsshelf_isRoot(root, original)) return (id)original;
-    [haoge_settingsshelf_roots addObject:root]; haoge_settingsshelf_lastRoot = root; ++haoge_settingsshelf_hits;
-    NSArray *result = [haoge_settingsshelf_state(root) haoge_settingsshelf_transform:original
-        enabled:YES navigation:haoge_settingsshelf_navigationRows()];
-    NSMutableArray *live = [original isKindOfClass:NSMutableArray.class] ? (id)original : [original mutableCopy];
-    // PSListController table data uses its retained array, not only the getter's
-    // returned value. Mutate that live array instead of returning an ignored copy.
+static BOOL haoge_settingsshelf_containsIdentical(NSArray *array, id object) {
+    for (id item in array) if (item == object) return YES;
+    return NO;
+}
+static BOOL haoge_settingsshelf_containsIdentifier(NSArray *array, NSString *identifier) {
+    if (!identifier.length) return NO;
+    for (id item in array) if ([[item identifier] isEqualToString:identifier]) return YES;
+    return NO;
+}
+// Match TweaksHub's deferred root insertion flow: let the system transaction
+// finish, then remove each moved contiguous run through PSListController APIs.
+static void haoge_settingsshelf_reconcile(PSListController *root) {
+    if (!root || !haoge_settingsshelf_isRoot(root) || haoge_settingsshelf_busy || ![NSThread isMainThread]) return;
+    ++haoge_settingsshelf_busy;
+    @try {
+        NSArray *current = [root specifiers];
+        if (![current isKindOfClass:NSArray.class]) return;
+        NSArray *navigation = haoge_settingsshelf_navigationRows();
+        if (navigation.count != 3) return;
+        NSArray *desired = [haoge_settingsshelf_state(root) haoge_settingsshelf_transform:current enabled:YES navigation:navigation];
+
+        NSMutableArray<NSValue *> *ranges = [NSMutableArray array]; NSInteger start = -1;
+        for (NSUInteger i = 0; i <= current.count; ++i) {
+            BOOL remove = i < current.count && !haoge_settingsshelf_containsIdentical(desired, current[i]);
+            if (remove && start < 0) start = (NSInteger)i;
+            if (!remove && start >= 0) { [ranges addObject:[NSValue valueWithRange:NSMakeRange((NSUInteger)start, i - (NSUInteger)start)]]; start = -1; }
+        }
+        for (NSValue *value in ranges.reverseObjectEnumerator) {
+            NSArray *run = [current subarrayWithRange:value.rangeValue];
+            if (run.count) [root removeContiguousSpecifiers:run animated:NO];
+        }
+
+        NSMutableArray *missingNavigation = [NSMutableArray array];
+        for (id row in navigation) if (!haoge_settingsshelf_containsIdentifier(current, [row identifier])) [missingNavigation addObject:row];
+        if (missingNavigation.count) [root addSpecifiersFromArray:missingNavigation animated:NO];
+        haoge_settingsshelf_root = root; ++haoge_settingsshelf_hits;
+    } @finally { --haoge_settingsshelf_busy; }
+}
+static void haoge_settingsshelf_schedule(id controller) {
+    if (!haoge_settingsshelf_isRoot(controller) || haoge_settingsshelf_busy || haoge_settingsshelf_reconcilePending) return;
+    haoge_settingsshelf_reconcilePending = YES;
+    __weak PSListController *weakRoot = controller;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        haoge_settingsshelf_reconcilePending = NO;
+        haoge_settingsshelf_reconcile(weakRoot);
+    });
+}
+
+static id haoge_settingsshelf_specifiersHook(id controller, SEL selector) {
+    NSArray *rows = ((id (*)(id, SEL))haoge_settingsshelf_originalSpecifiers)(controller, selector);
+    if (haoge_settingsshelf_busy || !haoge_settingsshelf_isRoot(controller) || ![rows isKindOfClass:NSArray.class]) return rows;
+    haoge_settingsshelf_root = controller; ++haoge_settingsshelf_hits;
+    // Only mutate the initial mutable list before its table is loaded, as the
+    // original specifiers hook does. Live tables are changed via PSListController APIs.
+    if ([controller isViewLoaded]) { haoge_settingsshelf_schedule(controller); return rows; }
+    NSArray *navigation = haoge_settingsshelf_navigationRows();
+    NSArray *result = [haoge_settingsshelf_state(controller) haoge_settingsshelf_transform:rows enabled:YES navigation:navigation];
+    NSMutableArray *live = [rows isKindOfClass:NSMutableArray.class] ? (NSMutableArray *)rows : [rows mutableCopy];
     if (![live isEqualToArray:result]) [live setArray:result];
     return live;
 }
-static void haoge_settingsshelf_regroup(PSListController *root) {
-    if (!root || ![NSThread isMainThread] || haoge_settingsshelf_busy) return;
-    ++haoge_settingsshelf_busy;
-    @try {
-        NSMutableArray *rows = haoge_settingsshelf_transform(root, [root specifiers]);
-        if (rows) [root setSpecifiers:rows];
-        if (root.isViewLoaded) [root.table reloadData];
-    } @finally { --haoge_settingsshelf_busy; }
+
+static void haoge_settingsshelf_installBoolHook(Class cls, NSString *name) {
+    SEL selector = NSSelectorFromString(name);
+    NSString *installedKey = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", name];
+    if ([haoge_settingsshelf_installed containsObject:installedKey] || ![cls instancesRespondToSelector:selector]) return;
+    __block IMP original = NULL;
+    IMP replacement = imp_implementationWithBlock(^(id controller, BOOL flag) {
+        ++haoge_settingsshelf_busy;
+        @try { ((void (*)(id, SEL, BOOL))original)(controller, selector, flag); }
+        @finally { --haoge_settingsshelf_busy; }
+        if (haoge_settingsshelf_isRoot(controller)) {
+            haoge_settingsshelf_root = controller;
+            if (!haoge_settingsshelf_busy) haoge_settingsshelf_schedule(controller);
+        }
+    });
+    MSHookMessageEx(cls, selector, replacement, &original);
+    if (original) [haoge_settingsshelf_installed addObject:installedKey];
 }
-static void haoge_settingsshelf_schedule(PSListController *root) {
-    __weak PSListController *weakRoot = root;
-    dispatch_async(dispatch_get_main_queue(), ^{ haoge_settingsshelf_regroup(weakRoot); });
+static void haoge_settingsshelf_installRootHooks(void) {
+    if (!haoge_settingsshelf_rootClass) {
+        for (NSString *name in @[@"PSUIPrefsListController", @"PrefsListController", @"PSGGeneralController"]) {
+            Class candidate = NSClassFromString(name);
+            if (candidate) { haoge_settingsshelf_rootClass = candidate; break; }
+        }
+    }
+    Class cls = haoge_settingsshelf_rootClass;
+    if (!cls) return;
+    if (!haoge_settingsshelf_installed) haoge_settingsshelf_installed = [NSMutableSet set];
+
+    NSString *specifiersKey = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", NSStringFromSelector(@selector(specifiers))];
+    if (![haoge_settingsshelf_installed containsObject:specifiersKey]) {
+        IMP original = NULL;
+        MSHookMessageEx(cls, @selector(specifiers), (IMP)haoge_settingsshelf_specifiersHook, &original);
+        haoge_settingsshelf_originalSpecifiers = original;
+        if (original) [haoge_settingsshelf_installed addObject:specifiersKey];
+    }
+
+    SEL insertSelector = NSSelectorFromString(@"_insertContiguousSpecifiers:atIndex:animated:");
+    NSString *insertKey = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", NSStringFromSelector(insertSelector)];
+    if (![haoge_settingsshelf_installed containsObject:insertKey] && [cls instancesRespondToSelector:insertSelector]) {
+        __block IMP original = NULL;
+        IMP replacement = imp_implementationWithBlock(^(id controller, NSArray *rows, NSInteger index, BOOL animated) {
+            ++haoge_settingsshelf_busy;
+            @try { ((void (*)(id, SEL, id, NSInteger, BOOL))original)(controller, insertSelector, rows, index, animated); }
+            @finally { --haoge_settingsshelf_busy; }
+            if (haoge_settingsshelf_isRoot(controller) && !haoge_settingsshelf_busy) {
+                haoge_settingsshelf_root = controller; haoge_settingsshelf_schedule(controller);
+            }
+        });
+        MSHookMessageEx(cls, insertSelector, replacement, &original);
+        if (original) [haoge_settingsshelf_installed addObject:insertKey];
+    }
+    haoge_settingsshelf_installBoolHook(cls, @"insertMovedThirdPartySpecifiersAnimated:");
+    haoge_settingsshelf_installBoolHook(cls, @"viewWillAppear:");
+    haoge_settingsshelf_installBoolHook(cls, @"viewDidAppear:");
+
+    SEL reloadSelector = @selector(reloadSpecifiers);
+    NSString *reloadKey = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", NSStringFromSelector(reloadSelector)];
+    if (![haoge_settingsshelf_installed containsObject:reloadKey] && [cls instancesRespondToSelector:reloadSelector]) {
+        __block IMP original = NULL;
+        IMP replacement = imp_implementationWithBlock(^(id controller) {
+            ++haoge_settingsshelf_busy;
+            @try { ((void (*)(id, SEL))original)(controller, reloadSelector); }
+            @finally { --haoge_settingsshelf_busy; }
+            if (haoge_settingsshelf_isRoot(controller) && !haoge_settingsshelf_busy) {
+                haoge_settingsshelf_root = controller; haoge_settingsshelf_schedule(controller);
+            }
+        });
+        MSHookMessageEx(cls, reloadSelector, replacement, &original);
+        if (original) [haoge_settingsshelf_installed addObject:reloadKey];
+    }
+    NSLog(@"[SettingsShelf] root-only original-style hooks installed: %@", NSStringFromClass(cls));
 }
 
-static BOOL haoge_settingsshelf_owns(Class cls, SEL selector) {
-    unsigned count = 0; Method *methods = class_copyMethodList(cls, &count); BOOL found = NO;
-    for (unsigned i = 0; i < count; ++i) if (method_getName(methods[i]) == selector) { found = YES; break; }
-    free(methods); return found;
-}
-static void haoge_settingsshelf_install(Class cls, NSString *name) {
-    SEL selector = NSSelectorFromString(name);
-    if (!cls || !haoge_settingsshelf_owns(cls, selector)) return;
-    NSString *key = [NSStringFromClass(cls) stringByAppendingFormat:@".%@", name];
-    if ([haoge_settingsshelf_installed containsObject:key]) return;
-    __block IMP original = NULL; IMP replacement = NULL;
-    if ([name isEqualToString:@"specifiers"]) {
-        replacement = imp_implementationWithBlock(^id(id controller) {
-            BOOL nested = haoge_settingsshelf_busy != 0; ++haoge_settingsshelf_busy; id rows = nil;
-            @try { rows = ((id (*)(id, SEL))original)(controller, selector); }
-            @finally { --haoge_settingsshelf_busy; }
-            if (nested) return rows;
-            ++haoge_settingsshelf_busy;
-            @try {
-                NSMutableArray *live = haoge_settingsshelf_transform(controller, rows);
-                if (live != rows && haoge_settingsshelf_isRoot(controller, rows)) [controller setSpecifiers:live];
-                return live;
-            } @finally { --haoge_settingsshelf_busy; }
-        });
-    } else if ([name isEqualToString:@"setSpecifiers:"]) {
-        replacement = imp_implementationWithBlock(^(id controller, NSArray *rows) {
-            BOOL nested = haoge_settingsshelf_busy != 0; ++haoge_settingsshelf_busy;
-            @try {
-                id live = nested ? rows : haoge_settingsshelf_transform(controller, rows);
-                ((void (*)(id, SEL, id))original)(controller, selector, live);
-            } @finally { --haoge_settingsshelf_busy; }
-        });
-    } else if ([name isEqualToString:@"_insertContiguousSpecifiers:atIndex:animated:"]) {
-        replacement = imp_implementationWithBlock(^(id controller, NSArray *rows, NSInteger index, BOOL animated) {
-            BOOL root = haoge_settingsshelf_isRoot(controller, nil);
-            ++haoge_settingsshelf_busy;
-            @try {
-                // Preserve the exact insertion index and animation flag. The
-                // system performs a UITableView batch update here; only regroup
-                // after the original insertion has fully returned.
-                ((void (*)(id, SEL, id, NSInteger, BOOL))original)(controller, selector, rows, index, animated);
-            } @finally { --haoge_settingsshelf_busy; }
-            if (root) haoge_settingsshelf_schedule(controller);
-        });
-    } else {
-        // All other installed methods here have exactly one BOOL argument.
-        replacement = imp_implementationWithBlock(^(id controller, BOOL animated) {
-            ++haoge_settingsshelf_busy;
-            @try { ((void (*)(id, SEL, BOOL))original)(controller, selector, animated); }
-            @finally { --haoge_settingsshelf_busy; }
-            if (haoge_settingsshelf_isRoot(controller, nil)) haoge_settingsshelf_schedule(controller);
-        });
-    }
-    if (replacement) {
-        MSHookMessageEx(cls, selector, replacement, &original);
-        if (original) [haoge_settingsshelf_installed addObject:key];
-    }
-}
-static void haoge_settingsshelf_installAll(void) {
-    for (NSString *name in @[@"PSListController", @"PSUIPrefsListController", @"PrefsListController", @"PreferencesRootController"]) {
-        Class cls = NSClassFromString(name);
-        for (NSString *selector in @[@"specifiers", @"setSpecifiers:", @"viewWillAppear:", @"viewDidAppear:",
-            @"insertMovedThirdPartySpecifiersAnimated:", @"_insertContiguousSpecifiers:atIndex:animated:"])
-            haoge_settingsshelf_install(cls, selector);
-    }
-}
-static void haoge_settingsshelf_visit(UIViewController *controller, NSMutableSet *visited) {
-    if (!controller || visited.count > 80 || [visited containsObject:controller]) return;
-    [visited addObject:controller];
-    if ([controller isKindOfClass:NSClassFromString(@"PSListController")] && controller.isViewLoaded) {
-        NSArray *rows = [(PSListController *)controller specifiers];
-        if (haoge_settingsshelf_isRoot(controller, rows)) haoge_settingsshelf_regroup((id)controller);
-    }
-    for (UIViewController *child in controller.childViewControllers) haoge_settingsshelf_visit(child, visited);
-    haoge_settingsshelf_visit(controller.presentedViewController, visited);
-}
-static void haoge_settingsshelf_discover(void) {
-    haoge_settingsshelf_installAll();
-    NSMutableSet *visited = [NSMutableSet set];
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) haoge_settingsshelf_visit(window.rootViewController, visited);
-    }
-}
 void haoge_settingsshelf_start(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        haoge_settingsshelf_roots = [NSHashTable weakObjectsHashTable];
-        haoge_settingsshelf_installed = [NSMutableSet set];
-        [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification object:nil
-            queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-                dispatch_async(dispatch_get_main_queue(), ^{ haoge_settingsshelf_installAll(); });
-            }];
-        [[NSNotificationCenter defaultCenter] addObserverForName:@"com.haoge.settingsshelf.regroup" object:nil
-            queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_discover(); }];
-        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
-            queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_discover(); }];
-        for (NSUInteger i = 0; i < 16; ++i) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.5 * NSEC_PER_SEC)),
-            dispatch_get_main_queue(), ^{ haoge_settingsshelf_discover(); });
-        NSLog(@"[SettingsShelf] always-on grouping runtime loaded");
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification object:nil queue:NSOperationQueue.mainQueue
+            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_installRootHooks(); }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:@"com.haoge.settingsshelf.regroup" object:nil queue:NSOperationQueue.mainQueue
+            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_schedule(haoge_settingsshelf_root); }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue
+            usingBlock:^(__unused NSNotification *note) { haoge_settingsshelf_installRootHooks(); haoge_settingsshelf_schedule(haoge_settingsshelf_root); }];
+        for (NSUInteger i = 0; i < 16; ++i) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ haoge_settingsshelf_installRootHooks(); });
+        haoge_settingsshelf_installRootHooks();
+        NSLog(@"[SettingsShelf] original-style root-list flow active");
     });
 }

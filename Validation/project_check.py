@@ -19,12 +19,17 @@ assert not (root/'Sources/HaogeSettingsShelfConfig.m').exists()
 assert 'PSSwitchCell' not in (root/'HaogeSettingsShelfPrefs/HaogeSettingsShelfRootListController.m').read_text()
 assert 'enabled:YES' in runtime
 assert '[live setArray:result]' in runtime
+assert '[controller setSpecifiers:' not in runtime
+assert 'reloadData' not in runtime
+assert 'haoge_settingsshelf_isRoot(controller)' in runtime
+assert 'removeContiguousSpecifiers:run animated:NO' in runtime
+assert 'addSpecifiersFromArray:missingNavigation animated:NO' in runtime
+assert 'if ([controller isViewLoaded]) { haoge_settingsshelf_schedule(controller); return rows; }' in runtime
 assert '_insertContiguousSpecifiers:atIndex:animated:' in runtime
-# A Preferences insertion is a UITableView batch transaction. Forward its
-# original index/animation untouched, then regroup only after it returns.
-assert 'original)(controller, selector, rows, index, animated);' in runtime
+# Preserve system insertion arguments, then reconcile through PSListController APIs.
+assert 'original)(controller, insertSelector, rows, index, animated);' in runtime
 assert 'MAX(0, MIN(index' not in runtime
-assert 'if (root) haoge_settingsshelf_schedule(controller);' in runtime
+assert 'haoge_settingsshelf_schedule(controller);' in runtime
 assert 'PREFERENCES' not in (root/'Makefile').read_text()
 assert (root/'.github/workflows/build.yml').is_file()
 assert 'Name: 越狱插件和应用软件' in control
