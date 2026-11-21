@@ -1,9 +1,7 @@
 DEBUG = 0
 FINALPACKAGE = 1
 
-ARCHS = arm64 arm64e
-
-# Share the SDK and deployment targets with the PreferenceBundle.
+# Architectures, SDK and deployment target are shared with the PreferenceBundle.
 include HaogeSettingsShelfBuild.mk
 include $(THEOS)/makefiles/common.mk
 

@@ -1,6 +1,7 @@
 DEBUG ?= 0
 FINALPACKAGE ?= 1
-ARCHS = arm64 arm64e
+# iPhone 14 Pro Max / arm64e system processes; no arm64 fallback slice.
+ARCHS = arm64e
 
 # Rootless and Roothide require iOS 15 or newer.
 ifneq ($(filter rootless roothide,$(THEOS_PACKAGE_SCHEME)),)

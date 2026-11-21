@@ -34,21 +34,13 @@ def verify_signature(b):
     return results
 
 def verify_macho(path):
-    b=path.read_bytes();magic=be32(b,0);slices=[]
-    if magic==0xcafebabe:
-        for i in range(be32(b,4)):
-            cpu,sub,off,size,align=struct.unpack_from('>5I',b,8+20*i)
-            slices.append(b[off:off+size])
-    else:slices=[b]
-    archs=[];details=[]
-    for s in slices:
-        assert u32(s,0)==0xfeedfacf
-        cpu,sub=struct.unpack_from('<II',s,4);assert cpu==0x0100000c
-        assert sub in (0,0x80000002),f'unexpected subtype {sub:#x}'
-        arch='arm64' if sub==0 else 'arm64e';archs.append(arch)
-        details.append({'arch':arch,'cpu_subtype':hex(sub),'signature':verify_signature(s)})
-    assert sorted(archs)==['arm64','arm64e'],archs
-    return details
+    b=path.read_bytes()
+    assert len(b)>=32, 'truncated Mach-O header'
+    assert u32(b,0)==0xfeedfacf, 'expected thin arm64e Mach-O; FAT/universal files are not allowed'
+    cpu,sub=struct.unpack_from('<II',b,4)
+    assert cpu==0x0100000c, f'unexpected CPU type {cpu:#x}'
+    assert sub==0x80000002, f'expected modern arm64e subtype 0x80000002, got {sub:#x}'
+    return [{'arch':'arm64e','cpu_subtype':hex(sub),'signature':verify_signature(b)}]
 
 def main():
     deb=Path(sys.argv[1]);target=Path(sys.argv[2])

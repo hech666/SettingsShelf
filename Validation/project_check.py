@@ -63,5 +63,11 @@ for filename in ('HaogeSettingsShelfApps@2x.png','HaogeSettingsShelfTweaks@2x.pn
     assert data[:8]==b'\x89PNG\r\n\x1a\n'
     assert struct.unpack_from('>II',data,16)==(60,60)
     assert filename in hook
+shared_build=(root/'HaogeSettingsShelfBuild.mk').read_text()
+assert [line.strip() for line in shared_build.splitlines() if line.strip().startswith('ARCHS')] == ['ARCHS = arm64e']
+assert not any(line.strip().startswith('ARCHS') for line in (root/'Makefile').read_text().splitlines())
+assert not any(line.strip().startswith('ARCHS') for line in (root/'HaogeSettingsShelfPrefs/Makefile').read_text().splitlines())
+assert 'include HaogeSettingsShelfBuild.mk' in (root/'Makefile').read_text()
+assert 'include ../HaogeSettingsShelfBuild.mk' in (root/'HaogeSettingsShelfPrefs/Makefile').read_text()
 subprocess.run(['sh','-n',str(root/'build.sh')],check=True)
 print(json.dumps({'plists':'all valid','package':'com.haoge.settingsshelf','filter':['com.apple.Preferences'],'always_on':True,'legacy_switch_ignored':True,'grouping_model':'present','delayed_insertion_hook':'present','navigation':'between account and connectivity','live_table_updates':'native remove/insert only','initial_array_transform':'before view loaded only','shell_build_script':'syntax-ok','theos_link_or_package_build':False},indent=2))
